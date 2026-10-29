@@ -1,88 +1,51 @@
-#!/bin/sh
-# By IamJony
-set -e
+# Makefile
+CXX      ?= g++
+CC       ?= gcc
+CXXFLAGS ?= -O2 -Wall -Wextra -std=c++17 -D_GLIBCXX_USE_CXX11_ABI=0
+CFLAGS   ?= -O2 -Wall -Wextra
+LDFLAGS  ?=
 
-D=$(cd "$(dirname "$0")" && pwd)
-APP=palomitas
-VER=1.0.0
-OUT="$D/tcz"
+FLTK_CFLAGS := $(shell fltk-config --cxxflags)
+FLTK_LDFLAGS:= $(shell fltk-config --ldflags)
 
-# Verificar que el binario y los scripts existen
-[ -x "$D/palomitas-fltk" ] || { echo "ERROR: run make in $D first"; exit 1; }
-[ -f "$D/palomitas-cli/Palomitas.sh" ] || { echo "ERROR: falta palomitas-cli/Palomitas.sh"; exit 1; }
+CURL_CFLAGS := $(shell pkg-config --cflags libcurl 2>/dev/null || echo "-I/usr/include")
+CURL_LIBS   := $(shell pkg-config --libs libcurl 2>/dev/null || echo "-lcurl")
 
-command -v mksquashfs >/dev/null || tce-load -i squashfs-tools >/dev/null
+CXXFLAGS += $(FLTK_CFLAGS) $(CURL_CFLAGS) -Isrc
+CFLAGS   += $(CURL_CFLAGS) -Isrc
+LDFLAGS  += $(FLTK_LDFLAGS) -lfltk -lfltk_images $(CURL_LIBS) -lstdc++ -lpthread -ldl -lm
 
-P=$(mktemp -d)
-chmod 755 "$P"
+CXX_SRCS := src/Palomitas-GUI.cpp src/themes.cpp src/library.cpp
+C_SRCS   := src/cJSON.c
 
-# Directorios
-install -d "$P/usr/local/bin"
-install -d "$P/usr/local/bin/palomitas-cli"
-install -d "$P/usr/local/share/pixmaps"
-install -d "$P/usr/local/share/applications"
+CXX_OBJS := $(CXX_SRCS:src/%.cpp=build/%.o)
+C_OBJS   := $(C_SRCS:src/%.c=build/%.o)
+OBJS     := $(CXX_OBJS) $(C_OBJS)
 
-# Binario GUI
-install -m 755 "$D/palomitas-fltk" "$P/usr/local/bin/palomitas-fltk"
+TARGET   := palomitas-fltk
 
-# Scripts CLI (bajo /usr/local/bin/palomitas-cli/)
-install -m 755 "$D/palomitas-cli/Palomitas.sh" "$P/usr/local/bin/palomitas-cli/Palomitas.sh"
-install -m 755 "$D/palomitas-cli/search.sh"    "$P/usr/local/bin/palomitas-cli/search.sh"
-install -m 755 "$D/palomitas-cli/iframe.sh"    "$P/usr/local/bin/palomitas-cli/iframe.sh"
-install -m 755 "$D/palomitas-cli/embed.sh"     "$P/usr/local/bin/palomitas-cli/embed.sh"
-install -m 644 "$D/palomitas-cli/config.sh"    "$P/usr/local/bin/palomitas-cli/config.sh"
+.PHONY: all clean install run
 
-# Wrapper CLI: /usr/local/bin/palomitas-cli → ejecuta el .sh
-cat > "$P/usr/local/bin/palomitas-cli" <<'WRAPPER'
-#!/bin/sh
-exec /usr/local/bin/palomitas-cli/Palomitas.sh "$@"
-WRAPPER
-chmod 755 "$P/usr/local/bin/palomitas-cli"
+all: $(TARGET)
 
-# Icono y .desktop (GUI y CLI)
-install -m 644 "$D/data/palomitas.png" "$P/usr/local/share/pixmaps/palomitas.png"
-install -m 644 "$D/palomitas.desktop" "$P/usr/local/share/applications/palomitas.desktop"
-install -m 644 "$D/palomitas-cli.desktop" "$P/usr/local/share/applications/palomitas-cli.desktop"
+$(TARGET): $(OBJS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
 
-# Permisos
-find "$P" -type d -exec chmod 755 {} +
+build/%.o: src/%.cpp | build
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Empaquetar
-mkdir -p "$OUT"
-mksquashfs "$P" "$OUT/$APP.tcz" -all-root -noappend -no-progress -b 4096 -no-xattrs >/dev/null
-(cd "$P" && find usr -type f | sed 's|^|/|' | sort) > "$OUT/$APP.tcz.list"
-rm -rf "$P"
+build/%.o: src/%.c | build
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# Dependencias (sin Xorg, sin libXtst, sin libXrandr)
-printf '%s\n' \
-    fltk-1.3.tcz \
-    curl.tcz \
-    jq.tcz \
-    yt-dlp.tcz \
-    mplayer.tcz \
-    > "$OUT/$APP.tcz.dep"
+build:
+	mkdir -p build
 
-# Checksum
-(cd "$OUT" && md5sum $APP.tcz > $APP.tcz.md5.txt)
+install: all
+	install -d $(DESTDIR)/usr/local/bin
+	install -m 755 $(TARGET) $(DESTDIR)/usr/local/bin/palomitas-fltk
 
-# Info
-SIZE=$(du -k "$OUT/$APP.tcz" | cut -f1)
-cat > "$OUT/$APP.tcz.info" <<INFO
-Title:          $APP.tcz
-Description:    palomitas: ver peliculas en espanol
-Version:        $VER
-Author:         IamJony
-Original-site:  https://github.com/IamJony
-Copying-policy: MIT
-Size:           ${SIZE}K
-Extension_by:   IamJony
-Tags:           peliculas video fltk streaming cli
-Comments:       Incluye GUI (palomitas-fltk) y CLI (palomitas-cli).
-                GUI: interfaz FLTK con grilla de caratulas.
-                CLI: menu de terminal para buscar y reproducir.
-                Requiere curl, jq, yt-dlp y mplayer.
-Change-log:     $(date +%Y/%m/%d) $VER primera version
-Current:        $(date +%Y/%m/%d) $VER
-INFO
+run: all
+	./$(TARGET)
 
-echo "OK: $OUT/$APP.tcz (${SIZE}K)"
+clean:
+	rm -rf build $(TARGET)
