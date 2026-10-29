@@ -1,4 +1,5 @@
 CXX      = g++
+CC       = gcc
 CXXFLAGS = -std=c++17 -O2 -Wall -Isrc
 LIBS     = `fltk-config --ldflags` -lfltk_images
 
@@ -10,7 +11,7 @@ OBJS   := $(OBJS:.c=.o)
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) `fltk-config --cxxflags` -o $@ $^ $(LIBS)
+	$(CXX) $(CXXFLAGS) `fltk-config --cxxflags` -o $@ $^ $(LIBS) -lstdc++
 
 src/%.o: src/%.cpp src/themes.h src/library.h src/cJSON.h
 	$(CXX) $(CXXFLAGS) `fltk-config --cxxflags` -c -o $@ $<
