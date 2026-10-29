@@ -1,6 +1,5 @@
 CXX      = g++
-CC       = gcc
-CXXFLAGS = -std=c++17 -O2 -Wall -Isrc
+CXXFLAGS = -std=c++17 -O2 -Wall -Isrc -D_GLIBCXX_USE_CXX11_ABI=0
 LIBS     = `fltk-config --ldflags` -lfltk_images
 
 TARGET = palomitas-fltk
