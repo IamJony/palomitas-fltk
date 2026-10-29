@@ -1,6 +1,6 @@
 # Palomitas
 
-Busca peliculas en español y reproduce desde terminal o  en interfaz grafica en FLTK
+Busca películas en español para reproducirlas desde la terminal de Linux o mediante una interfaz gráfica en FLTK, compatible con FLINUX y Tiny Core Linux
 
 ![Palomitas](capturas/ui.png)
 
