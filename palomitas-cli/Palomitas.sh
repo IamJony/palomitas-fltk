@@ -1,5 +1,5 @@
 #!/bin/bash
-# Interfaz CLI Palomitas by IamJony
+# Interfaz CLI Palomitas by IamJony - Adaptado para Tiny Core (ASCII)
 
 # Configuración
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,8 +28,8 @@ MOVIE_URL=""
 PLAYER_URL=""
 STREAM_URL=""
 
-# Reproductor por defecto (mpv o mplayer)
-DEFAULT_PLAYER="mpv"
+# Reproductor por defecto
+DEFAULT_PLAYER="mplayer"
 
 # Detectar reproductor disponible
 detect_player() {
@@ -47,45 +47,45 @@ clear_screen() {
     printf "\033c"
 }
 
-# Mostrar banner
+# Mostrar banner (ASCII puro)
 show_banner() {
     clear_screen
     printf "${CYAN}"
-    printf "╔══════════════════════════════════════════╗\n"
-    printf "║     ${YELLOW}Palomitas BY IamJony v1.0${CYAN}          ║\n"
-    printf "║   https://github.com/IamJony             ║\n"
-    printf "║    Buscar → Extraer → Reproducir         ║\n"
-    printf "╚══════════════════════════════════════════╝\n"
+    printf "+------------------------------------------+\n"
+    printf "|     ${YELLOW}Palomitas BY IamJony v1.0${CYAN}          |\n"
+    printf "|   https://github.com/IamJony             |\n"
+    printf "|    Buscar -> Extraer -> Reproducir       |\n"
+    printf "+------------------------------------------+\n"
     printf "${NC}"
 }
 
 # Mostrar menú principal
 show_main_menu() {
-    printf "${CYAN}=== MENÚ PRINCIPAL ===${NC}\n"
+    printf "${CYAN}=== MENU PRINCIPAL ===${NC}\n"
     printf "\n"
-    printf "  1) ${GREEN}Buscar películas${NC}\n"
+    printf "  1) ${GREEN}Buscar peliculas${NC}\n"
     printf "  2) ${BLUE}Reproducir desde URL${NC}\n"
     printf "  3) ${YELLOW}Limpiar archivos${NC}\n"
     printf "  0) ${RED}Salir${NC}\n"
     printf "\n"
-    printf "Selecciona una opción: "
+    printf "Selecciona una opcion: "
 }
 
 # Buscar películas
 search_movies() {
     show_banner
-    printf "${CYAN}=== BUSCAR PELÍCULAS ===${NC}\n"
+    printf "${CYAN}=== BUSCAR PELICULAS ===${NC}\n"
     printf "\n"
 
     if [ $# -eq 0 ]; then
-        printf "¿Qué película buscas?: "
+        printf "Que pelicula buscas?: "
         read -r query
     else
         query="$*"
     fi
 
     if [ -z "$query" ]; then
-        printf "${RED}✗ No se ingresó término de búsqueda${NC}\n"
+        printf "${RED}[X] No se ingreso termino de busqueda${NC}\n"
         sleep 2
         return
     fi
@@ -96,13 +96,13 @@ search_movies() {
     if [ -f "$SEARCH_SCRIPT" ]; then
         bash "$SEARCH_SCRIPT" "$query"
     else
-        printf "${RED}✗ Error: No se encuentra search.sh${NC}\n"
+        printf "${RED}[X] Error: No se encuentra search.sh${NC}\n"
         sleep 2
         return
     fi
 
     if [ ! -f "$TEMP_DIR"/buscar.json ]; then
-        printf "${RED}✗ No se encontraron resultados${NC}\n"
+        printf "${RED}[X] No se encontraron resultados${NC}\n"
         sleep 2
         return
     fi
@@ -131,14 +131,14 @@ process_search_results() {
             fi
         done < <(jq -r 'to_entries[] | "\(.key)|\(.value.title)|\(.value.url)"' "$TEMP_DIR"/buscar.json 2>/dev/null)
     else
-        printf "${RED}✗ Necesitas instalar jq para procesar resultados${NC}\n"
-        printf "Instala con: apt install jq  o  brew install jq\n"
+        printf "${RED}[X] Necesitas instalar jq para procesar resultados${NC}\n"
+        printf "Instala con: tce-load -wi jq\n"
         sleep 3
         return
     fi
 
     if [ $count -eq 0 ]; then
-        printf "${RED}✗ No se encontraron resultados${NC}\n"
+        printf "${RED}[X] No se encontraron resultados${NC}\n"
         sleep 2
         return
     fi
@@ -153,7 +153,7 @@ show_movie_selection() {
     shift
     local titles=("$@")
 
-    printf "${GREEN}✓ Encontradas $count películas:${NC}\n"
+    printf "${GREEN}[OK] Encontradas $count peliculas:${NC}\n"
     printf "\n"
 
     for i in "${!titles[@]}"; do
@@ -161,11 +161,11 @@ show_movie_selection() {
     done
 
     printf "\n"
-    printf "  ${YELLOW}0)${NC} Volver al menú principal\n"
+    printf "  ${YELLOW}0)${NC} Volver al menu principal\n"
     printf "\n"
 
     while true; do
-        printf "Selecciona una película (1-$count): "
+        printf "Selecciona una pelicula (1-$count): "
         read -r choice
 
         if [[ "$choice" == "0" ]]; then
@@ -176,7 +176,7 @@ show_movie_selection() {
             select_movie $((choice-1))
             break
         else
-            printf "${RED}✗ Opción inválida. Intenta de nuevo.${NC}\n"
+            printf "${RED}[X] Opcion invalida. Intenta de nuevo.${NC}\n"
         fi
     done
 }
@@ -189,7 +189,7 @@ select_movie() {
     SELECTED_MOVIE=$(echo "$selected" | cut -d'|' -f2)
     MOVIE_URL=$(echo "$selected" | cut -d'|' -f3)
 
-    printf "\n${GREEN}✓ Seleccionada: $SELECTED_MOVIE${NC}\n"
+    printf "\n${GREEN}[OK] Seleccionada: $SELECTED_MOVIE${NC}\n"
     printf "\n"
 
     process_movie
@@ -202,13 +202,13 @@ process_movie() {
     if [ -f "$IFRAME_SCRIPT" ]; then
         bash "$IFRAME_SCRIPT" "$MOVIE_URL"
     else
-        printf "${RED}✗ Error: No se encuentra iframe.sh${NC}\n"
+        printf "${RED}[X] Error: No se encuentra iframe.sh${NC}\n"
         sleep 2
         return
     fi
 
     if [ ! -f "$TEMP_DIR"/peli.json ]; then
-        printf "${RED}✗ No se pudo extraer el iframe${NC}\n"
+        printf "${RED}[X] No se pudo extraer el iframe${NC}\n"
         sleep 2
         return
     fi
@@ -224,13 +224,13 @@ process_movie() {
     fi
 
     if [ -z "$PLAYER_URL" ]; then
-        printf "${RED}✗ No se pudo obtener URL del player${NC}\n"
+        printf "${RED}[X] No se pudo obtener URL del player${NC}\n"
         printf "Revisa el archivo "$TEMP_DIR"/peli.json manualmente\n"
         sleep 3
         return
     fi
 
-    printf "${GREEN}✓ Player URL: $PLAYER_URL${NC}\n"
+    printf "${GREEN}[OK] Player URL: $PLAYER_URL${NC}\n"
     printf "\n"
 
     extract_stream
@@ -243,13 +243,13 @@ extract_stream() {
     if [ -f "$EMBED_SCRIPT" ]; then
         bash "$EMBED_SCRIPT" "$PLAYER_URL" "$MOVIE_URL"
     else
-        printf "${RED}✗ Error: No se encuentra embed.sh${NC}\n"
+        printf "${RED}[X] Error: No se encuentra embed.sh${NC}\n"
         sleep 2
         return
     fi
 
     if [ ! -f "$TEMP_DIR"/output.json ]; then
-        printf "${RED}✗ No se pudo extraer el stream${NC}\n"
+        printf "${RED}[X] No se pudo extraer el stream${NC}\n"
         sleep 2
         return
     fi
@@ -263,13 +263,13 @@ extract_stream() {
     fi
 
     if [ -z "$STREAM_URL" ] || [ "$STREAM_URL" == "null" ]; then
-        printf "${RED}✗ No se pudo obtener URL del stream${NC}\n"
+        printf "${RED}[X] No se pudo obtener URL del stream${NC}\n"
         printf "Revisa el archivo "$TEMP_DIR"/output.json manualmente\n"
         sleep 3
         return
     fi
 
-    printf "${GREEN}✓ Stream extraído correctamente!${NC}\n"
+    printf "${GREEN}[OK] Stream extraido correctamente!${NC}\n"
     printf "${BLUE}Tipo: $STREAM_TYPE${NC}\n"
     printf "\n"
 
@@ -296,18 +296,16 @@ play_with_mplayer() {
     local referrer
     referrer=$(get_referrer)
 
-    # Verificar que yt-dlp esté disponible
     if ! command -v yt-dlp &> /dev/null; then
-        printf "${RED}✗ yt-dlp no está instalado${NC}\n"
+        printf "${RED}[X] yt-dlp no esta instalado${NC}\n"
         printf "Instala con: pip install yt-dlp\n"
         return 1
     fi
 
-    # Escapar comillas dobles del título para pasarlo a mplayer
     local safe_title="${SELECTED_MOVIE//\"/\'}"
     safe_title="${safe_title//\\/}"
 
-    printf "${YELLOW}▶ Reproduciendo con mplayer (via yt-dlp)...${NC}\n"
+    printf "${YELLOW}> Reproduciendo con mplayer (via yt-dlp)...${NC}\n"
 
     yt-dlp --add-header "Referer: $referrer" \
         -S "res:480" -o - "$STREAM_URL" \
@@ -322,7 +320,7 @@ play_stream() {
 
     printf "${CYAN}=== REPRODUCIR ===${NC}\n"
     printf "\n"
-    printf "Película: $SELECTED_MOVIE\n"
+    printf "Pelicula: $SELECTED_MOVIE\n"
     printf "URL: $STREAM_URL\n"
     printf "\n"
     printf "Opciones:\n"
@@ -333,31 +331,31 @@ play_stream() {
     command -v mplayer &> /dev/null || printf " ${RED}(no instalado)${NC}"
     printf "\n"
     printf "  3) ${BLUE}Descargar stream${NC}\n"
-    printf "  4) ${YELLOW}Volver al menú${NC}\n"
+    printf "  4) ${YELLOW}Volver al menu${NC}\n"
     printf "\n"
 
     while true; do
-        printf "Selecciona opción (1-4): "
+        printf "Selecciona opcion (1-4): "
         read -r choice
 
         case $choice in
             1)
                 if ! command -v mpv &> /dev/null; then
-                    printf "${RED}✗ mpv no está instalado${NC}\n"
+                    printf "${RED}[X] mpv no esta instalado${NC}\n"
                     printf "Instala con: sudo apt install mpv\n"
                     continue
                 fi
-                printf "\n${GREEN}▶ Iniciando reproducción con mpv...${NC}\n"
+                printf "\n${GREEN}> Iniciando reproduccion con mpv...${NC}\n"
                 printf "${YELLOW}Presiona 'q' para salir del reproductor${NC}\n"
                 play_with_mpv
                 ;;
             2)
                 if ! command -v mplayer &> /dev/null; then
-                    printf "${RED}✗ mplayer no está instalado${NC}\n"
+                    printf "${RED}[X] mplayer no esta instalado${NC}\n"
                     printf "Instala con: sudo apt install mplayer\n"
                     continue
                 fi
-                printf "\n${MAGENTA}▶ Iniciando reproducción con mplayer...${NC}\n"
+                printf "\n${MAGENTA}> Iniciando reproduccion con mplayer...${NC}\n"
                 printf "${YELLOW}Presiona 'q' para salir del reproductor${NC}\n"
                 play_with_mplayer
                 ;;
@@ -386,13 +384,13 @@ play_from_url() {
     read -r url
 
     if [ -z "$url" ]; then
-        printf "${RED}✗ No se ingresó URL${NC}\n"
+        printf "${RED}[X] No se ingreso URL${NC}\n"
         sleep 2
         return
     fi
 
     MOVIE_URL="$url"
-    SELECTED_MOVIE="Película desde URL"
+    SELECTED_MOVIE="Pelicula desde URL"
 
     printf "\n${YELLOW}Procesando: $url${NC}\n"
     process_movie
@@ -406,7 +404,7 @@ cleanup_files() {
 
     rm -f "$TEMP_DIR"/* 2>/dev/null
 
-    printf "${GREEN}✓ Archivos temporales eliminados${NC}\n"
+    printf "${GREEN}[OK] Archivos temporales eliminados${NC}\n"
     sleep 2
 }
 
@@ -414,8 +412,8 @@ cleanup_files() {
 check_dependencies() {
     local missing=()
 
-    if ! command -v curl &> /dev/null; then
-        missing+=("curl")
+    if ! command -v curl &> /dev/null && ! command -v wget &> /dev/null; then
+        missing+=("curl o wget")
     fi
 
     if ! command -v jq &> /dev/null; then
@@ -423,20 +421,20 @@ check_dependencies() {
     fi
 
     if [ ${#missing[@]} -gt 0 ]; then
-        printf "${RED}✗ Faltan dependencias:${NC}\n"
+        printf "${RED}[X] Faltan dependencias:${NC}\n"
         for dep in "${missing[@]}"; do
             printf "  - $dep\n"
         done
         printf "\n"
         printf "Instala con:\n"
+        printf "  Tiny Core: tce-load -wi ${missing[*]}\n"
         printf "  Ubuntu/Debian: sudo apt install ${missing[*]}\n"
-        printf "  macOS: brew install ${missing[*]}\n"
         printf "\n"
         read -p "Presiona Enter para continuar de todos modos..."
     fi
 
     if ! command -v mpv &> /dev/null && ! command -v mplayer &> /dev/null; then
-        printf "${YELLOW}⚠ No se detectó ningún reproductor (mpv o mplayer).${NC}\n"
+        printf "${YELLOW}[!] No se detecto ningun reproductor (mpv o mplayer).${NC}\n"
         printf "Instala uno con:\n"
         printf "  sudo apt install mpv      (recomendado)\n"
         printf "  sudo apt install mplayer  (alternativa)\n"
@@ -457,7 +455,7 @@ command_line_mode() {
                 if [ -n "$STREAM_URL" ]; then
                     detect_player
                     if [ -n "$DEFAULT_PLAYER" ]; then
-                        printf "\n${GREEN}▶ Iniciando reproducción automática con $DEFAULT_PLAYER...${NC}\n"
+                        printf "\n${GREEN}> Iniciando reproduccion automatica con $DEFAULT_PLAYER...${NC}\n"
                         if [ "$DEFAULT_PLAYER" == "mpv" ]; then
                             play_with_mpv
                         else
@@ -473,7 +471,7 @@ command_line_mode() {
                 play_from_url
             else
                 MOVIE_URL="$1"
-                SELECTED_MOVIE="Película desde CLI"
+                SELECTED_MOVIE="Pelicula desde CLI"
                 process_movie
                 if [ -n "$STREAM_URL" ]; then
                     detect_player
@@ -510,9 +508,9 @@ show_help() {
     printf "Modo interactivo:\n"
     printf "  $0\n"
     printf "\n"
-    printf "Modo línea de comandos:\n"
-    printf "  $0 search <término>          Buscar películas\n"
-    printf "  $0 search <término> --play   Buscar y reproducir primera\n"
+    printf "Modo linea de comandos:\n"
+    printf "  $0 search <termino>          Buscar peliculas\n"
+    printf "  $0 search <termino> --play   Buscar y reproducir primera\n"
     printf "  $0 play <url>                Reproducir desde URL\n"
     printf "  $0 clean                     Limpiar archivos\n"
     printf "\n"
@@ -548,12 +546,12 @@ main() {
                 cleanup_files
                 ;;
             0)
-                printf "\n${GREEN}¡Hasta luego!${NC}\n"
+                printf "\n${GREEN}Hasta luego!${NC}\n"
                 printf "\n"
                 exit 0
                 ;;
             *)
-                printf "\n${RED}✗ Opción inválida${NC}\n"
+                printf "\n${RED}[X] Opcion invalida${NC}\n"
                 sleep 1
                 ;;
         esac
@@ -561,7 +559,7 @@ main() {
 }
 
 # Manejar Ctrl+C
-trap 'printf "\n\n${RED}✗ Interrumpido por el usuario${NC}\n"; exit 1' INT
+trap 'printf "\n\n${RED}[X] Interrumpido por el usuario${NC}\n"; exit 1' INT
 
 # Ejecutar
 main "$@"
