@@ -1,21 +1,22 @@
 # Makefile
 CXX      ?= g++
 CC       ?= gcc
-CXXFLAGS ?= -O2 -Wall -Wextra -std=c++17 -D_GLIBCXX_USE_CXX11_ABI=0
+CXXFLAGS ?= -O2 -Wall -Wextra -std=c++17 -D_GLIBCXX_USE_CXX11_ABI=0 -fno-rtti -fno-exceptions
 CFLAGS   ?= -O2 -Wall -Wextra
 LDFLAGS  ?=
 
-FLTK_CFLAGS := $(shell fltk-config --cxxflags)
-FLTK_LDFLAGS:= $(shell fltk-config --ldflags)
+FLTK_CFLAGS := $(shell fltk-config --cxxflags 2>/dev/null)
+FLTK_LDFLAGS:= $(shell fltk-config --ldflags 2>/dev/null)
 
-CURL_CFLAGS := $(shell pkg-config --cflags libcurl 2>/dev/null || echo "-I/usr/include")
-CURL_LIBS   := $(shell pkg-config --libs libcurl 2>/dev/null || echo "-lcurl")
+# Si fltk-config falla, usar flags manuales de Tiny Core
+ifeq ($(strip $(FLTK_LDFLAGS)),)
+  FLTK_LDFLAGS := -L/usr/local/lib -lfltk -ldl -lm -lXext -lX11
+endif
 
-CXXFLAGS += $(FLTK_CFLAGS) $(CURL_CFLAGS) -Isrc
-CFLAGS   += $(CURL_CFLAGS) -Isrc
+CXXFLAGS += $(FLTK_CFLAGS) -Isrc
+CFLAGS   += -Isrc
 
-# Aseguramos -lfltk explícito ANTES de -lfltk_images
-LDFLAGS  += $(FLTK_LDFLAGS) -lfltk -lfltk_images $(CURL_LIBS) -lstdc++ -lpthread -ldl -lm
+LDFLAGS  += $(FLTK_LDFLAGS) -lfltk_images -lstdc++ -lpthread -ldl -lm
 
 CXX_SRCS := src/Palomitas-GUI.cpp src/themes.cpp src/library.cpp
 C_SRCS   := src/cJSON.c
