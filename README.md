@@ -11,3 +11,21 @@ Busca y reproduce películas en español desde la terminal de Linux o mediante u
 - **CLI en bash** para usar desde terminal.
 - Reproductor con `mplayer` o `mpv` + `yt-dlp`.
 - Favoritos persistentes en `~/.config/palomitas-fltk/data.json`.
+
+## Dependencias
+
+### Para compilar
+- `compiletc` (g++, make)
+- `fltk-1.3-dev`
+- `libX11-dev`
+- `libXft-dev`
+- `squashfs-tools`
+
+### Para ejecutar
+- `fltk-1.3`
+- `mplayer` (o `mpv`)
+- `curl`
+- `jq`
+- `yt-dlp`
+- `python3` (requerido por `yt-dlp`)
+- `ffmpeg` (opcional, mejora la extracción con `yt-dlp`)
