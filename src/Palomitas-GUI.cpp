@@ -21,36 +21,92 @@
 #include <vector>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <array>
 #include <regex>
 #include <functional>
+#include <thread>
+#include <mutex>
+#include <chrono>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <poll.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <errno.h>
+#include <limits.h>
 
 // ---------- Utilidades ----------
+static std::string shell_quote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    out += "'";
+    return out;
+}
 
-// Ejecuta un comando shell y devuelve su stdout
-static std::string run_cmd(const std::string& cmd) {
-    fprintf(stderr, "[run_cmd] CMD: %s\n", cmd.c_str());
-    std::array<char, 4096> buffer;
+// Ejecuta un comando con timeout propio usando fork/exec (no depende de popen
+// ni de timeout ni de bash -c). Universal: Linux, Termux, macOS, BSD.
+static std::string run_cmd_timeout(const std::string& cmd, int timeout_sec = 120) {
+    int pipefd[2];
+    if (pipe(pipefd) != 0) return "";
+
+    pid_t pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return ""; }
+    if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[1]);
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
+        _exit(127);
+    }
+
+    close(pipefd[1]);
     std::string result;
-    FILE* fp = popen(cmd.c_str(), "r");
-    if (!fp) { fprintf(stderr, "[run_cmd] popen FALLO\n"); return ""; }
-    while (fgets(buffer.data(), buffer.size(), fp) != nullptr) result += buffer.data();
-    int rc = pclose(fp);
-    fprintf(stderr, "[run_cmd] rc=%d, salida (%zu bytes): %s\n", rc, result.size(),
-            result.substr(0, 200).c_str());
+    char buf[4096];
+    auto start = std::chrono::steady_clock::now();
+
+    while (true) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - start).count();
+        if (elapsed >= timeout_sec) {
+            kill(pid, SIGKILL);
+            break;
+        }
+        struct pollfd pfd{pipefd[0], POLLIN, 0};
+        int pr = poll(&pfd, 1, 500);
+        if (pr < 0 && errno != EINTR) break;
+        if (pr == 0) continue;
+        ssize_t n = read(pipefd[0], buf, sizeof(buf));
+        if (n > 0) result.append(buf, n);
+        else if (n == 0) break;
+        else if (errno != EINTR) break;
+    }
+    close(pipefd[0]);
+
+    int status = 0;
+    if (waitpid(pid, &status, WNOHANG) == 0) {
+        kill(pid, SIGKILL);
+        waitpid(pid, &status, 0);
+    }
     return result;
 }
 
-// Lee un archivo completo a string
 static std::string read_file(const std::string& path) {
     std::ifstream f(path);
     if (!f.is_open()) return "";
     std::stringstream ss; ss << f.rdbuf(); return ss.str();
 }
 
-// Extrae el valor string de una clave JSON simple
+static bool file_exists(const std::string& path) {
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 && st.st_size > 0;
+}
+
 static std::string json_get_str(const std::string& json, const std::string& key) {
     std::regex re("\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
     std::smatch m;
@@ -71,66 +127,112 @@ static std::string json_get_str(const std::string& json, const std::string& key)
     return "";
 }
 
-// Cambia el sufijo -WxH de la URL por -420x630 (o lo añade si no hay sufijo)
+// Convierte cualquier URL de carátula a su variante de máxima resolución
+// (el servidor sirve hasta -768x1152.<ext>). Elimina cualquier sufijo -NxM
+// previo y añade -768x1152 antes de la extensión. Respeta ?query/#hash.
+static std::string to_max_res_url(const std::string& url) {
+    if (url.empty()) return url;
+    std::string base = url, suffix;
+    auto qpos = base.find_first_of("?#");
+    if (qpos != std::string::npos) { suffix = base.substr(qpos); base = base.substr(0, qpos); }
+
+    auto slash = base.find_last_of('/');
+    auto dot   = base.find_last_of('.');
+    std::string dir, ext;
+    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
+        dir = base.substr(0, dot);
+        ext = base.substr(dot);
+    } else {
+        dir = base;
+        ext = ".jpg";
+    }
+
+    std::regex re("-\\d+x\\d+$");
+    if (std::regex_search(dir, re))
+        dir = std::regex_replace(dir, re, "");
+
+    return dir + "-768x1152" + ext + suffix;
+}
+
 static std::string upgrade_image_url(const std::string& url) {
-    if (url.empty()) return url;
-    std::string base = url, suffix;
-    auto qpos = base.find_first_of("?#");
-    if (qpos != std::string::npos) { suffix = base.substr(qpos); base = base.substr(0, qpos); }
-    auto slash = base.find_last_of('/'), dot = base.find_last_of('.');
-    std::string ext, name = base;
-    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) { ext = base.substr(dot); name = base.substr(0, dot); }
-    std::regex re("-\\d+x\\d+$");
-    if (std::regex_search(name, re)) name = std::regex_replace(name, re, "-420x630");
-    else { auto ls = name.find_last_of('/'); std::string fn = (ls==std::string::npos)?name:name.substr(ls+1); if (fn.size()>8) name += "-420x630"; }
-    return name + ext + suffix;
+    return to_max_res_url(url);
 }
 
-// Mismo que arriba pero con -683x1024 (fallback)
 static std::string upgrade_image_url_alt(const std::string& url) {
-    if (url.empty()) return url;
-    std::string base = url, suffix;
-    auto qpos = base.find_first_of("?#");
-    if (qpos != std::string::npos) { suffix = base.substr(qpos); base = base.substr(0, qpos); }
-    auto slash = base.find_last_of('/'), dot = base.find_last_of('.');
-    std::string ext, name = base;
-    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) { ext = base.substr(dot); name = base.substr(0, dot); }
-    std::regex re("-\\d+x\\d+$");
-    if (std::regex_search(name, re)) name = std::regex_replace(name, re, "-683x1024");
-    else { auto ls = name.find_last_of('/'); std::string fn = (ls==std::string::npos)?name:name.substr(ls+1); if (fn.size()>8) name += "-683x1024"; }
-    return name + ext + suffix;
+    return to_max_res_url(url);
 }
 
-// Parsea el JSON de búsqueda (formato { "ID": { title, url, img, extra:{date,imdb} } })
 static std::vector<MovieItem> parse_search_json(const std::string& json) {
     std::vector<MovieItem> out;
-    std::regex block_re("\"(\\d+)\"\\s*:\\s*\\{");
-    auto begin = std::sregex_iterator(json.begin(), json.end(), block_re);
+    if (json.empty()) return out;
+
+    std::regex title_re("\"title\"\\s*:\\s*\"");
     auto end = std::sregex_iterator();
-    std::vector<std::pair<std::string, size_t>> starts;
-    for (auto it = begin; it != end; ++it) starts.emplace_back((*it)[1].str(), (size_t)it->position());
-    for (size_t i = 0; i < starts.size(); ++i) {
-        size_t start = starts[i].second;
-        size_t stop = (i+1 < starts.size()) ? starts[i+1].second : json.size();
-        std::string chunk = json.substr(start, stop - start);
-        MovieItem m;
-        m.id = starts[i].first;
-        m.title = json_get_str(chunk, "title");
-        m.url = json_get_str(chunk, "url");
-        m.img = json_get_str(chunk, "img");
-        std::regex extra_re("\"extra\"\\s*:\\s*\\{([^}]*)\\}");
-        std::smatch em;
-        if (std::regex_search(chunk, em, extra_re)) {
-            std::string ex = em[1].str();
-            m.year = json_get_str(ex, "date");
-            m.imdb = json_get_str(ex, "imdb");
+
+    size_t search_from = 0;
+    while (search_from < json.size()) {
+        auto it = std::sregex_iterator(json.begin() + search_from, json.end(), title_re);
+        if (it == end) break;
+
+        size_t title_pos = search_from + (size_t)it->position();
+
+        size_t brace_open = std::string::npos;
+        int depth = 0;
+        for (size_t i = title_pos; i > 0; --i) {
+            char c = json[i-1];
+            if (c == '}') ++depth;
+            else if (c == '{') {
+                if (depth == 0) { brace_open = i - 1; break; }
+                --depth;
+            }
         }
-        if (!m.title.empty()) out.push_back(std::move(m));
+        if (brace_open == std::string::npos) { search_from = title_pos + 1; continue; }
+
+        size_t brace_close = std::string::npos;
+        depth = 0;
+        for (size_t i = brace_open; i < json.size(); ++i) {
+            char c = json[i];
+            if (c == '{') ++depth;
+            else if (c == '}') {
+                if (--depth == 0) { brace_close = i; break; }
+            }
+        }
+        if (brace_close == std::string::npos) { search_from = title_pos + 1; continue; }
+
+        std::string chunk = json.substr(brace_open, brace_close - brace_open + 1);
+
+        MovieItem m;
+        m.title = json_get_str(chunk, "title");
+        if (!m.title.empty()) {
+            m.url = json_get_str(chunk, "url");
+            m.img = json_get_str(chunk, "img");
+
+            m.id = json_get_str(chunk, "id");
+            if (m.id.empty()) {
+                std::hash<std::string> h;
+                m.id = std::to_string(h(m.title));
+            }
+
+            std::regex extra_re("\"extra\"\\s*:\\s*\\{([^}]*)\\}");
+            std::smatch em;
+            if (std::regex_search(chunk, em, extra_re)) {
+                std::string ex = em[1].str();
+                m.year = json_get_str(ex, "date");
+                m.imdb = json_get_str(ex, "imdb");
+            }
+            if (m.year.empty()) m.year = json_get_str(chunk, "date");
+            if (m.imdb.empty()) m.imdb = json_get_str(chunk, "imdb");
+
+            out.push_back(std::move(m));
+        }
+
+        search_from = brace_close + 1;
     }
+
     return out;
 }
 
-// ---------- Imagen de fondo (cover, escala al tamaño del widget) ----------
+// ---------- Imagen de fondo ----------
 class BgImage : public Fl_Box {
 public:
     Fl_Shared_Image* img = nullptr;
@@ -156,7 +258,7 @@ public:
     }
 };
 
-// ---------- Botón plano con esquinas redondeadas ----------
+// ---------- Botón moderno ----------
 class ModernButton : public Fl_Button {
 public:
     Fl_Color bg = C_BTN, hi = C_BTN_HI, fg = C_TEXT;
@@ -188,13 +290,13 @@ public:
     }
 };
 
-// ---------- Label simple ----------
+// ---------- Label ----------
 class Label : public Fl_Widget {
 public:
     std::string text;
     int size = 13;
     Fl_Font font = FL_HELVETICA;
-    int fg_role = 0;   // 0=TEXT, 1=DIM, 2=ACCENT, 3=GREEN, 4=RED
+    int fg_role = 0;
     Fl_Align al = FL_ALIGN_LEFT;
     Label(int x, int y, int w, int h) : Fl_Widget(x, y, w, h) {}
     void set(const std::string& t) { text = t; redraw(); if (parent()) parent()->redraw(); }
@@ -236,15 +338,19 @@ public:
     }
 };
 
+
 // ---------- Celda de película ----------
 class MovieCell : public Fl_Widget {
 public:
     int index;
     MovieItem* movie;
     bool selected = false;
+
     MovieCell(int x, int y, int w, int h, MovieItem* m, int idx)
         : Fl_Widget(x, y, w, h), index(idx), movie(m) { box(FL_NO_BOX); }
+
     void set_selected(bool s) { if (selected == s) return; selected = s; redraw(); }
+
     int handle(int event) override {
         switch (event) {
             case FL_PUSH: return 1;
@@ -252,9 +358,12 @@ public:
             default: return Fl_Widget::handle(event);
         }
     }
+
     void draw() override {
+        fl_push_clip(x(), y(), w(), h());
+
         // Fondo redondeado
-        int r = 8;
+        int r = 6;
         fl_color(selected ? C_SEL : C_PANEL);
         fl_rectf(x(), y() + r, w(), h() - 2*r);
         fl_rectf(x() + r, y(), w() - 2*r, h());
@@ -263,44 +372,68 @@ public:
         fl_pie(x(), y() + h() - 2*r, 2*r, 2*r, 180, 270);
         fl_pie(x() + w() - 2*r, y() + h() - 2*r, 2*r, 2*r, 270, 360);
 
-        // Carátula
-        int pad = 10, img_w = w() - pad*2, img_h = h() - 68;
-        int ix = x() + pad, iy = y() + pad;
+        // Área de imagen: celda menos el alto del bloque de texto
+        // (2 líneas de título + 1 de meta + paddings)
+        int text_block_h = 62;
+        int img_w = w();
+        int img_h = h() - text_block_h;
+        if (img_h < 1) img_h = 1;
+
         std::string img_path = "/tmp/TEMP_Palomitas/poster_" + movie->id + ".img";
         Fl_Shared_Image* img = Fl_Shared_Image::get(img_path.c_str());
+
         if (img && img->w() > 0) {
-            int pw = img->w(), ph = img->h();
-            double ar = (double)pw / ph;
-            int dw = img_w, dh = (int)(img_w / ar);
-            if (dh > img_h) { dh = img_h; dw = (int)(img_h * ar); }
-            Fl_Image* s1 = (dw < pw || dh < ph) ? img->copy(pw/2, ph/2) : (Fl_Image*)img;
-            Fl_Image* s2 = (s1 && (dw < s1->w() || dh < s1->h())) ? s1->copy(dw, dh) : s1;
-            if (s2) { int dx = ix + (img_w - s2->w())/2; int dy = iy + (img_h - s2->h())/2; s2->draw(dx, dy); }
-            if (s2 && s2 != img && s2 != s1) delete s2;
-            if (s1 && s1 != img) delete s1;
+            // Escalar exactamente al área de imagen (sin recortes manuales)
+            Fl_Image* scaled = img->copy(img_w, img_h);
+            if (scaled) {
+                scaled->draw(x(), y());
+                delete scaled;
+            } else {
+                img->draw(x(), y());
+            }
         } else {
-            fl_draw_box(FL_BORDER_BOX, ix, iy, img_w, img_h, C_DIM);
-            fl_color(C_TEXT); fl_font(FL_HELVETICA, 12);
-            fl_draw("Sin imagen", ix, iy, img_w, img_h, FL_ALIGN_CENTER);
+            fl_draw_box(FL_BORDER_BOX, x(), y(), img_w, img_h, C_DIM);
+            fl_color(C_TEXT); fl_font(FL_HELVETICA, 10);
+            fl_draw("Sin imagen", x(), y(), img_w, img_h, FL_ALIGN_CENTER);
         }
 
-        // Título y metadatos
+        // ----- Bloque de texto debajo de la imagen -----
+        // Padding arriba (imagen -> título)
+        int pad_top = 8;
+        // Padding abajo (meta -> borde celda)
+        // Padding lateral
+        int pad_x = 5;
+
+        int text_y = y() + img_h + pad_top;
+        int text_w = w() - pad_x * 2;
+
+        // Título (2 líneas máx)
         std::string t = movie->title;
-        if (t.size() > 42) t = t.substr(0, 39) + "...";
-        int ty = iy + img_h + 8;
         fl_color(selected ? FL_WHITE : C_TEXT);
-        fl_font(FL_HELVETICA_BOLD, 13);
-        fl_draw(t.c_str(), x() + pad, ty, w() - pad*2, 34,
+        fl_font(FL_HELVETICA_BOLD, 10);
+        fl_draw(t.c_str(), x() + pad_x, text_y, text_w, 28,
                 FL_ALIGN_LEFT | FL_ALIGN_TOP | FL_ALIGN_WRAP | FL_ALIGN_CLIP);
+
+        // Padding entre título y meta
+        int pad_mid = 6;
+
+        // Meta: año + IMDb
         fl_color(selected ? FL_WHITE : C_DIM);
-        fl_font(FL_HELVETICA, 11);
-        std::string meta = "Año " + movie->year + "   IMDb: " + movie->imdb;
-        fl_draw(meta.c_str(), x() + pad, ty + 38, w() - pad*2, 16,
-                FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        fl_font(FL_HELVETICA, 9);
+        std::string meta = movie->year + "  IMDb:" + movie->imdb;
+        fl_draw(meta.c_str(), x() + pad_x, text_y + 28 + pad_mid, text_w, 14,
+                FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
+
+        if (selected) {
+            fl_color(C_ACCENT);
+            fl_rect(x(), y(), w(), h());
+        }
+
+        fl_pop_clip();
     }
 };
 
-// ---------- Ventana principal (detecta SHOW para redibujar al restaurar) ----------
+// ---------- Ventana principal ----------
 class MainWindow : public Fl_Window {
 public:
     MainWindow(int w, int h, const char* title) : Fl_Window(w, h, title) {}
@@ -309,13 +442,13 @@ public:
         if (on_resize_cb) on_resize_cb(W, H);
     }
     int handle(int e) override {
-        // Al restaurar desde minimizado, diferir el redibujado para no reentrar
         if (e == FL_SHOW) {
-            Fl::add_timeout(0.05, [](void* data) {
+            Fl::add_timeout(0.1, [](void* data) {
                 auto* win = (MainWindow*)data;
                 if (!win || !win->visible()) return;
                 if (win->on_resize_cb) win->on_resize_cb(win->w(), win->h());
                 win->redraw();
+                Fl::flush();
             }, this);
         }
         return Fl_Window::handle(e);
@@ -323,7 +456,49 @@ public:
     std::function<void(int,int)> on_resize_cb;
 };
 
-// ---------- App principal ----------
+// ---------- Resolución universal de rutas ----------
+static std::string find_base_dir(const std::string& relative_marker) {
+    std::vector<std::string> candidates;
+
+    if (const char* env = std::getenv("PALOMITAS_HOME")) {
+        if (env[0]) candidates.emplace_back(env);
+    }
+
+    auto add_with_parents = [&](std::string dir) {
+        for (int i = 0; i < 6 && !dir.empty() && dir != "/"; ++i) {
+            candidates.push_back(dir);
+            auto sl = dir.find_last_of('/');
+            if (sl == std::string::npos || sl == 0) break;
+            dir = dir.substr(0, sl);
+        }
+    };
+
+    char buf[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        std::string exe(buf);
+        auto pos = exe.find_last_of('/');
+        if (pos != std::string::npos) add_with_parents(exe.substr(0, pos));
+    }
+
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd))) add_with_parents(cwd);
+
+    candidates.push_back("/usr/local/share/palomitas");
+    candidates.push_back("/usr/share/palomitas");
+    candidates.push_back("/opt/palomitas");
+    candidates.push_back(".");
+
+    for (auto& c : candidates) {
+        struct stat st;
+        if (stat((c + "/" + relative_marker).c_str(), &st) == 0)
+            return c;
+    }
+    return candidates.empty() ? "." : candidates.front();
+}
+
+// ---------- App ----------
 class PalomitasGUI {
 public:
     MainWindow* window;
@@ -346,7 +521,10 @@ public:
 
     std::vector<MovieItem> movies;
     int selected_index = -1;
-    std::string project_dir;
+
+    std::string base_dir;
+    std::string cli_dir;
+    std::string asset_dir;
 
     enum View { V_HOME, V_SEARCH, V_FAVS };
     View current_view = V_HOME;
@@ -355,16 +533,28 @@ public:
     std::string prev_query;
 
     bool busy = false;
-    int blink_state = 0;
+    bool searching = false;
     std::string busy_msg;
 
-    static constexpr int CELL_W = 200;
-    static constexpr int CELL_H = 340;
-    static constexpr int GAP = 14;
-    static constexpr int PADDING = 14;
+    // === Comunicación thread -> GUI sin Fl::awake (Termux-safe) ===
+    std::mutex result_mutex;
+    bool result_ready = false;
+    struct SearchResult {
+        std::string json;
+        std::string log;
+        std::string query;
+        bool ok = false;
+    } pending_result;
+
+    static constexpr int CELL_W = 120;
+    static constexpr int CELL_H = 195;
+    static constexpr int GAP = 10;
+    static constexpr int PADDING = 10;
     static constexpr int SIDE_W = 110;
 
-    PalomitasGUI(int w, int h, const char* title) : project_dir(get_project_dir()) {
+    PalomitasGUI(int w, int h, const char* title) {
+        resolve_paths();
+
         fl_register_images();
         window = new MainWindow(w, h, title);
         window->on_resize_cb = [this](int W, int H) { layout(W, H); };
@@ -406,10 +596,12 @@ public:
         scroll_spacer = new Fl_Box(scroll->x(), scroll->y(), scroll->w() - 2, 10);
         scroll->end();
 
-        // Cargar imagen de fondo si existe
         {
-            std::string img_path = project_dir + "/asset/home.jpeg";
+            std::string img_path = asset_dir + "/home.jpeg";
             Fl_Shared_Image* home_img = Fl_Shared_Image::get(img_path.c_str());
+            if (!home_img || home_img->w() <= 0) {
+                home_img = Fl_Shared_Image::get((base_dir + "/asset/home.jpeg").c_str());
+            }
             if (home_img && home_img->w() > 0) home_shared_img = home_img;
         }
 
@@ -443,71 +635,96 @@ public:
         g_refresh_cb = [this]() { this->apply_colors(); };
         apply_colors();
         update_fav_count();
+
+        check_environment();
+
+        // Sondear resultado de búsqueda cada 100ms (evita Fl::awake en Termux)
+        Fl::add_timeout(0.1, poll_search_result_cb, this);
     }
 
     ~PalomitasGUI() { if (g_refresh_cb) g_refresh_cb = nullptr; }
 
     void show() { window->show(); }
 
-    // Actualiza el status y detiene el parpadeo
+    void resolve_paths() {
+        base_dir = find_base_dir("palomitas-cli/search.sh");
+
+        struct stat st;
+        if (stat((base_dir + "/palomitas-cli/search.sh").c_str(), &st) != 0) {
+            if (stat((base_dir + "/search.sh").c_str(), &st) == 0) {
+                cli_dir = base_dir;
+                auto sl = base_dir.find_last_of('/');
+                base_dir = (sl != std::string::npos) ? base_dir.substr(0, sl) : ".";
+            } else {
+                std::string alt = find_base_dir("search.sh");
+                if (stat((alt + "/search.sh").c_str(), &st) == 0) {
+                    cli_dir = alt;
+                    auto sl = alt.find_last_of('/');
+                    base_dir = (sl != std::string::npos) ? alt.substr(0, sl) : ".";
+                } else {
+                    cli_dir = base_dir + "/palomitas-cli";
+                }
+            }
+        } else {
+            cli_dir = base_dir + "/palomitas-cli";
+        }
+
+        asset_dir = base_dir + "/asset";
+        if (stat((asset_dir + "/home.jpeg").c_str(), &st) != 0) {
+            std::string test = base_dir;
+            for (int i = 0; i < 4; ++i) {
+                if (stat((test + "/asset/home.jpeg").c_str(), &st) == 0) {
+                    asset_dir = test + "/asset";
+                    break;
+                }
+                auto sl = test.find_last_of('/');
+                if (sl == std::string::npos) break;
+                test = test.substr(0, sl);
+            }
+        }
+
+        fprintf(stderr, "[Palomitas] base_dir=%s\n", base_dir.c_str());
+        fprintf(stderr, "[Palomitas] cli_dir=%s\n", cli_dir.c_str());
+        fprintf(stderr, "[Palomitas] asset_dir=%s\n", asset_dir.c_str());
+    }
+
+    void check_environment() {
+        std::string msg;
+        struct stat st;
+        if (stat(cli_dir.c_str(), &st) != 0) {
+            msg = "AVISO: no existe " + cli_dir;
+        } else if (stat((cli_dir + "/search.sh").c_str(), &st) != 0) {
+            msg = "AVISO: falta search.sh en " + cli_dir;
+        }
+        if (std::system("command -v jq >/dev/null 2>&1") != 0)
+            msg += (msg.empty() ? "" : " | ") + std::string("falta jq");
+        if (std::system("command -v wget >/dev/null 2>&1") != 0)
+            msg += (msg.empty() ? "" : " | ") + std::string("falta wget");
+        if (!msg.empty()) {
+            status_label->fg_role = 4;
+            status_label->set(msg);
+            fprintf(stderr, "[Palomitas] %s\n", msg.c_str());
+        }
+    }
+
     void set_status(const std::string& msg) {
         busy = false; busy_msg.clear();
         status_label->fg_role = 1; status_label->set(msg);
     }
 
-    // Inicia el status parpadeante
     void start_busy(const std::string& msg) {
-        busy = true; busy_msg = msg; blink_state = 0;
+        busy = true; busy_msg = msg;
         status_label->fg_role = 3; status_label->set(msg);
         status_label->redraw();
-        window->redraw();
-        Fl::check();
-        Fl::add_timeout(0.3, blink_timer_cb, this);
     }
 
-    // Detiene el parpadeo y muestra el mensaje final
     void stop_busy(const std::string& msg) {
         busy = false; busy_msg.clear();
         status_label->fg_role = 3;
         status_label->set(msg);
         status_label->redraw();
-        window->redraw();
-        Fl::check();
     }
 
-    static void blink_timer_cb(void* data) {
-        auto* self = (PalomitasGUI*)data;
-        if (!self->busy) return;
-        self->blink_state ^= 1;
-        std::string s = self->busy_msg;
-        if (self->blink_state) {
-            s += "...";
-            self->status_label->fg_role = 3;  // verde
-        } else {
-            s += "   ";
-            self->status_label->fg_role = 2;  // acento
-        }
-        self->status_label->set(s);
-        self->status_label->redraw();
-        self->window->redraw();
-        Fl::check();  // forzar repintado inmediato
-        Fl::add_timeout(0.3, blink_timer_cb, self);
-    }
-
-    // Directorio del ejecutable (para localizar search.sh, iframe.sh, embed.sh y asset/)
-    std::string get_project_dir() {
-        char buf[4096];
-        ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-        if (n > 0) {
-            buf[n] = '\0';
-            std::string p(buf);
-            auto pos = p.find_last_of('/');
-            if (pos != std::string::npos) return p.substr(0, pos);
-        }
-        return ".";
-    }
-
-    // Crea el BgImage si hay imagen cargada y el scroll ya tiene tamaño
     void ensure_bg_image() {
         if (bg_image) return;
         if (!home_shared_img) return;
@@ -520,7 +737,6 @@ public:
         scroll->redraw();
     }
 
-    // Recoloca todos los widgets y fuerza redibujado
     void layout(int W, int H) {
         int rx = SIDE_W + 10;
         search_input->resize(SIDE_W + 70, 55, W - SIDE_W - 220, 34);
@@ -539,8 +755,14 @@ public:
         fav_side_btn->resize(10, 60, SIDE_W - 20, 40);
         if (fav_count_label) fav_count_label->resize(10, 104, SIDE_W - 20, 18);
 
-        if (!movies.empty()) rebuild_grid();
-        ensure_bg_image();
+        if (!cells.empty()) {
+            rebuild_grid_positions_only();
+        } else if (!movies.empty()) {
+            rebuild_grid();
+        } else {
+            ensure_bg_image();
+        }
+
         if (bg_image) {
             bg_image->resize(scroll->x(), scroll->y(), scroll->w(), scroll->h());
             bg_image->redraw();
@@ -552,7 +774,6 @@ public:
         window->damage(FL_DAMAGE_ALL);
     }
 
-    // Aplica los colores del tema actual a todos los widgets
     void apply_colors() {
         window->color(C_BG);
         search_input->color(C_PANEL);
@@ -575,10 +796,10 @@ public:
         for (auto* c : cells) c->redraw();
         scroll->redraw();
         window->redraw();
-        Fl::flush();
     }
 
     void rebuild_grid();
+    void rebuild_grid_positions_only();
     void highlight_cell(int idx) { for (size_t i = 0; i < cells.size(); ++i) cells[i]->set_selected((int)i == idx); }
     void clear_cells() {
         for (auto* c : cells) delete c;
@@ -613,7 +834,6 @@ public:
         gui->set_status("Seleccionado: " + gui->movies[cell->index].title);
     }
 
-    // Actualiza el contador de favoritos
     void update_fav_count() {
         if (!fav_count_label) return;
         int n = (int)Library::instance().favorites.size();
@@ -623,7 +843,6 @@ public:
         fav_count_label->redraw();
     }
 
-    // Guarda el estado actual para el botón Volver
     void save_state() {
         prev_view = current_view;
         prev_movies = movies;
@@ -646,7 +865,6 @@ public:
         set_status("Volviste a la vista anterior.");
     }
 
-    // Añade o quita la película seleccionada de favoritos
     void toggle_favorite() {
         if (selected_index < 0 || selected_index >= (int)movies.size()) {
             set_status("Selecciona una pelicula primero.");
@@ -680,7 +898,6 @@ public:
         }
     }
 
-    // Muestra los favoritos en la grilla
     void show_favorites() {
         auto favs = Library::instance().favorites;
         if (favs.empty()) { set_status("No hay favoritos guardados."); return; }
@@ -695,46 +912,133 @@ public:
         set_status(std::to_string(movies.size()) + " favoritos");
     }
 
+    // Sonda el resultado del thread de búsqueda
+    static void poll_search_result_cb(void* data) {
+        auto* self = (PalomitasGUI*)data;
+        self->poll_search_result();
+        if (self->window && self->window->visible()) {
+            Fl::repeat_timeout(0.1, poll_search_result_cb, self);
+        }
+    }
+
+    void poll_search_result() {
+        SearchResult r;
+        {
+            std::lock_guard<std::mutex> lk(result_mutex);
+            if (!result_ready) return;
+            r = pending_result;
+            result_ready = false;
+        }
+
+        searching = false;
+
+        if (!r.ok) {
+            std::string msg = "search.sh no genero buscar.json.";
+            if (!r.log.empty()) {
+                size_t p = 0;
+                while (p < r.log.size() && (r.log[p] == '\n' || r.log[p] == '\r')) ++p;
+                size_t e = r.log.find('\n', p);
+                msg += " " + r.log.substr(p, e == std::string::npos ? 100 : e - p);
+            }
+            stop_busy(msg);
+            return;
+        }
+
+        movies = parse_search_json(r.json);
+        if (movies.empty()) {
+            stop_busy("JSON sin titulos utiles (" + std::to_string(r.json.size()) + " bytes).");
+            return;
+        }
+
+        clear_cells();
+        selected_index = -1;
+        play_btn->deactivate();
+        fav_btn->deactivate();
+        rebuild_grid();
+        scroll->scroll_to(0, 0);
+        scroll->redraw();
+        scroll->damage(FL_DAMAGE_ALL);
+        window->redraw();
+        window->damage(FL_DAMAGE_ALL);
+        stop_busy(std::to_string(movies.size()) + " resultados para: " + r.query);
+    }
+
     void do_search();
     void do_play();
     void do_clean();
     void play_stream_mplayer(const std::string& stream_url, const std::string& player_url, const std::string& title);
     void download_posters_parallel(const std::vector<size_t>& pending);
+    void download_posters_sync(const std::vector<size_t>& pending);
 };
 
-// Descarga las carátulas usando wget de forma directa y secuencial (la forma más estable)
-void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending) {
+// Descarga las miniaturas pendientes de forma paralela (bloquea hasta terminar).
+// Se llama desde el hilo de búsqueda (NO desde el hilo principal de FLTK)
+// justo antes de crear las celdas, para que aparezcan ya completas.
+void PalomitasGUI::download_posters_sync(const std::vector<size_t>& pending) {
     if (pending.empty()) return;
 
-    // Aseguramos que el directorio existe
     std::system("mkdir -p /tmp/TEMP_Palomitas");
 
-    for (size_t idx : pending) {
-        const MovieItem& m = movies[idx];
-        std::string out = "/tmp/TEMP_Palomitas/poster_" + m.id + ".img";
+    const int GROUP = 4;
+    for (size_t g = 0; g < pending.size(); g += GROUP) {
+        size_t end = std::min(pending.size(), g + GROUP);
+        std::vector<std::thread> workers;
 
-        // 1. Intentamos la URL original
-        std::string cmd = "wget -q --no-check-certificate --timeout=20 --tries=1 -O '" + out + "' '" + m.img + "'";
-        std::system(cmd.c_str());
+        for (size_t k = g; k < end; ++k) {
+            size_t idx = pending[k];
+            workers.emplace_back([this, idx]() {
+                const MovieItem& m = movies[idx];
+                std::string out = "/tmp/TEMP_Palomitas/poster_" + m.id + ".img";
 
-        // 2. Comprobamos si se descargó algo válido (más de 1KB)
-        struct stat st;
-        if (stat(out.c_str(), &st) != 0 || st.st_size < 1000) {
-            // 3. Si falló, probamos la variante 420x630
-            std::string alt_url = upgrade_image_url(m.img);
-            if (alt_url != m.img) {
-                std::string cmd2 = "wget -q --no-check-certificate --timeout=20 --tries=1 -O '" + out + "' '" + alt_url + "'";
-                std::system(cmd2.c_str());
-            }
+                struct stat st;
+                if (stat(out.c_str(), &st) == 0 && st.st_size > 1000) return;
+
+                if (!m.img.empty()) {
+                    std::string cmd = "wget -q --no-check-certificate --timeout=8 --tries=1 -O "
+                        + shell_quote(out) + " " + shell_quote(m.img) + " 2>/dev/null";
+                    std::system(cmd.c_str());
+                }
+                if (stat(out.c_str(), &st) != 0 || st.st_size <= 1000) {
+                    std::remove(out.c_str());
+                }
+            });
         }
+        for (auto& t : workers) t.join();
     }
-    
-    // Pequeña pausa para asegurar que el sistema de archivos ha escrito todo
-    usleep(100000);
-    Fl::flush();
 }
 
-// Reconstruye la grilla de carátulas
+// (compatibilidad) redirige a la versión síncrona
+void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending) {
+    download_posters_sync(pending);
+}
+
+
+
+void PalomitasGUI::rebuild_grid_positions_only() {
+    if (cells.empty() || movies.empty()) return;
+
+    int usable_w = scroll->w() - 2 * PADDING;
+    int cols = usable_w / (CELL_W + GAP);
+    if (cols < 2) cols = 2;
+    int grid_w = cols * CELL_W + (cols - 1) * GAP;
+    int offset_x = scroll->x() + (scroll->w() - grid_w) / 2;
+    int base_y = scroll->y() + PADDING;
+
+    for (size_t i = 0; i < cells.size(); ++i) {
+        int col = (int)i % cols, row = (int)i / cols;
+        int cx = offset_x + col * (CELL_W + GAP);
+        int cy = base_y + row * (CELL_H + GAP);
+        cells[i]->resize(cx, cy, CELL_W, CELL_H);
+        cells[i]->redraw();
+    }
+
+    int rows_count = ((int)movies.size() + cols - 1) / cols;
+    int total_h = PADDING * 2 + rows_count * CELL_H + (rows_count - 1) * GAP;
+    scroll_spacer->resize(scroll->x(), scroll->y(), scroll->w() - 2, total_h);
+    scroll->redraw();
+    scroll->damage(FL_DAMAGE_ALL);
+}
+
 void PalomitasGUI::rebuild_grid() {
     clear_cells();
     std::vector<size_t> pending;
@@ -745,7 +1049,10 @@ void PalomitasGUI::rebuild_grid() {
         if (stat(path.c_str(), &st) == 0) std::remove(path.c_str());
         pending.push_back(i);
     }
-    download_posters_parallel(pending);
+    // Descargar TODAS las miniaturas pendientes antes de crear celdas.
+    // Bloquea ~1 s con 6 imágenes, pero la grilla aparece ya completa
+    // (sin "Sin imagen" intermedio).
+    download_posters_sync(pending);
 
     if (movies.empty()) {
         scroll_spacer->resize(scroll->x(), scroll->y(), scroll->w() - 2, 10);
@@ -774,54 +1081,76 @@ void PalomitasGUI::rebuild_grid() {
     int rows_count = ((int)movies.size() + cols - 1) / cols;
     int total_h = PADDING * 2 + rows_count * CELL_H + (rows_count - 1) * GAP;
     scroll_spacer->resize(scroll->x(), scroll->y(), scroll->w() - 2, total_h);
-    // El spacer debe ser el último hijo para que Fl_Scroll calcule bien el área total
     scroll->add(scroll_spacer);
-    // Resetear el scroll al principio y forzar repintado completo
     scroll->scroll_to(0, 0);
+
+    // Pre-decodificar miniaturas antes del primer pintado.
+    // Con -768x1152 cada una tarda ~250 ms; 6 celdas ~1.5 s total.
+    // Se hace en el hilo principal para evitar carreras con Fl_Shared_Image.
     scroll->redraw();
     scroll->damage(FL_DAMAGE_ALL);
     window->redraw();
     window->damage(FL_DAMAGE_ALL);
-    Fl::check();
     Fl::flush();
 }
 
-// Busca usando search.sh (que escribe el JSON en /tmp/TEMP_Palomitas/buscar.json)
 void PalomitasGUI::do_search() {
+    if (searching) { set_status("Busqueda en curso..."); return; }
     std::string q = search_input->value() ? search_input->value() : "";
     if (q.empty()) { set_status("Escribe un termino de busqueda."); return; }
+
+    struct stat st;
+    if (stat(cli_dir.c_str(), &st) != 0) {
+        set_status("No existe el directorio: " + cli_dir);
+        return;
+    }
+    if (stat((cli_dir + "/search.sh").c_str(), &st) != 0) {
+        set_status("No existe: " + cli_dir + "/search.sh");
+        return;
+    }
+
     if (current_view != V_SEARCH) save_state();
     current_view = V_SEARCH;
+    searching = true;
     start_busy("Buscando: " + q);
-    window->redraw(); Fl::check();
-    clear_cells();
-    movies.clear();
-    selected_index = -1;
-    play_btn->deactivate();
-    fav_btn->deactivate();
-    std::string qq = q; for (auto& c : qq) if (c == '\'') c = ' ';
-    std::system("rm -f /tmp/TEMP_Palomitas/buscar.json");
-    run_cmd("cd '" + project_dir + "/palomitas-cli' && bash search.sh '" + qq + "' 2>&1");
-    std::string json = read_file("/tmp/TEMP_Palomitas/buscar.json");
-    fprintf(stderr, "[do_search] json len=%zu\n", json.size());
-    if (json.empty()) { stop_busy("No hay resultados o fallo search.sh"); return; }
-    movies = parse_search_json(json);
-    if (movies.empty()) { stop_busy("No se encontraron resultados."); return; }
-    start_busy("Descargando caratulas");
-    window->redraw(); Fl::check();
-    rebuild_grid();
-    // Forzar un repintado completo del área de resultados
-    scroll->scroll_to(0, 0);
-    scroll->redraw();
-    scroll->damage(FL_DAMAGE_ALL);
-    window->redraw();
-    window->damage(FL_DAMAGE_ALL);
-    Fl::check();
-    Fl::flush();
-    stop_busy(std::to_string(movies.size()) + " resultados para: " + q);
+
+    std::string qq = q;
+    for (auto& c : qq) if (c == '\'' || c == '"' || c == '\\' || c == '`') c = ' ';
+    std::string cli = cli_dir;
+
+    {
+        std::lock_guard<std::mutex> lk(result_mutex);
+        result_ready = false;
+        pending_result = SearchResult{};
+    }
+
+    std::thread([this, qq, cli]() {
+        std::system("mkdir -p /tmp/TEMP_Palomitas");
+        std::system("rm -f /tmp/TEMP_Palomitas/buscar.json");
+
+        std::string cmd = "cd " + shell_quote(cli) + " && bash search.sh " + shell_quote(qq) + " 2>&1";
+        std::string log = run_cmd_timeout(cmd, 120);
+
+        {
+            std::ofstream lf("/tmp/TEMP_Palomitas/search_gui.log");
+            lf << "CMD: " << cmd << "\n---\n" << log << "\n";
+        }
+
+        bool ok = file_exists("/tmp/TEMP_Palomitas/buscar.json");
+        std::string json = ok ? read_file("/tmp/TEMP_Palomitas/buscar.json") : "";
+
+        {
+            std::lock_guard<std::mutex> lk(result_mutex);
+            pending_result.json = std::move(json);
+            pending_result.log = std::move(log);
+            pending_result.query = qq;
+            pending_result.ok = ok;
+            result_ready = true;
+        }
+        // No usamos Fl::awake: poll_search_result() lo recoge.
+    }).detach();
 }
 
-// Reproduce un stream con yt-dlp + mplayer usando el referer del player
 void PalomitasGUI::play_stream_mplayer(const std::string& stream_url,
                                         const std::string& player_url,
                                         const std::string& title) {
@@ -831,55 +1160,113 @@ void PalomitasGUI::play_stream_mplayer(const std::string& stream_url,
     std::smatch m;
     if (std::regex_search(player_url, m, re)) referrer = m[1].str();
     if (referrer.empty()) { set_status("No se pudo extraer el referrer."); return; }
-    std::string which = run_cmd("command -v yt-dlp 2>/dev/null");
-    if (which.empty()) { set_status("yt-dlp no encontrado."); return; }
-    auto esc_dq = [](std::string s) {
-        std::string o;
-        for (char c : s) { if (c == '"' || c == '\\' || c == '$' || c == '`') o += '\\'; o += c; }
-        return o;
-    };
+
     start_busy("Cargando stream: " + title);
-    // Escapar el título para pasarlo a mplayer
-    std::string safe_title = title;
-    for (auto& c : safe_title) if (c == '"' || c == '\\') c = ' ';
-    std::string cmd =
-        "yt-dlp --add-header \"Referer: " + esc_dq(referrer) + "\""
-        " -S \"res:480\" -o - \"" + esc_dq(stream_url) + "\""
-        " 2>/tmp/TEMP_Palomitas/ytdlp.log"
-        " | mplayer -demuxer lavf"
-        " -title \"" + safe_title + "\""
-        " -"
-        " >/tmp/TEMP_Palomitas/mplayer.log 2>&1 &";
-    std::system(cmd.c_str());
-    stop_busy("Reproduciendo: " + title);
+
+    std::thread([this, stream_url, referrer, title]() {
+        std::string which = run_cmd_timeout("command -v yt-dlp 2>/dev/null", 10);
+        if (which.empty()) {
+            Fl::add_timeout(0.05, [](void* d) {
+                ((PalomitasGUI*)d)->stop_busy("yt-dlp no encontrado.");
+            }, this);
+            return;
+        }
+
+        auto esc_dq = [](std::string s) {
+            std::string o;
+            for (char c : s) {
+                if (c == '"' || c == '\\' || c == '$' || c == '`') o += '\\';
+                o += c;
+            }
+            return o;
+        };
+
+        std::string safe_title = title;
+        for (auto& c : safe_title) if (c == '"' || c == '\\') c = ' ';
+
+        std::string cmd =
+            "yt-dlp --add-header \"Referer: " + esc_dq(referrer) + "\""
+            " -f \"best[height<=480]\""
+            " --no-part --no-cache-dir --buffer-size 1M"
+            " -o - \"" + esc_dq(stream_url) + "\""
+            " 2>/tmp/TEMP_Palomitas/ytdlp.log"
+            " | mplayer -demuxer lavf"
+            " -title \"" + safe_title + "\""
+            " -"
+            " >/tmp/TEMP_Palomitas/mplayer.log 2>&1";
+        std::system(cmd.c_str());
+
+        Fl::add_timeout(0.05, [](void* d) {
+            ((PalomitasGUI*)d)->stop_busy("Reproducción finalizada.");
+        }, this);
+    }).detach();
 }
 
-// Extrae iframe y stream con los scripts, luego reproduce
 void PalomitasGUI::do_play() {
     if (selected_index < 0 || selected_index >= (int)movies.size()) {
         set_status("Selecciona una pelicula primero.");
         return;
     }
-    const MovieItem& m = movies[selected_index];
-    start_busy("Extrayendo iframe: " + m.title);
-    window->redraw(); Fl::check();
-    run_cmd("cd '" + project_dir + "/palomitas-cli' && bash iframe.sh '" + m.url + "' 2>&1");
-    std::string peli = read_file("/tmp/TEMP_Palomitas/peli.json");
-    std::string player_url = json_get_str(peli, "embed_url");
-    if (player_url.empty()) player_url = json_get_str(peli, "url");
-    if (player_url.empty()) { stop_busy("No se pudo obtener el player URL."); return; }
-    start_busy("Extrayendo stream...");
-    window->redraw(); Fl::check();
-    run_cmd("cd '" + project_dir + "/palomitas-cli' && bash embed.sh '" + player_url + "' '" + m.url + "' 2>&1");
-    std::string output = read_file("/tmp/TEMP_Palomitas/output.json");
-    std::string stream = json_get_str(output, "video");
-    if (stream.empty() || stream == "null") { stop_busy("No se pudo extraer el stream."); return; }
-    play_stream_mplayer(stream, player_url, m.title);
+
+    MovieItem m = movies[selected_index];
+    std::string title = m.title;
+    std::string movie_url = m.url;
+    std::string cli = cli_dir;
+
+    start_busy("Extrayendo iframe: " + title);
+
+    std::string* title_ptr = new std::string(title);
+
+    std::thread([this, movie_url, title_ptr, cli, title]() {
+        std::string cmd1 = "cd " + shell_quote(cli) + " && bash iframe.sh " + shell_quote(movie_url) + " 2>&1";
+        run_cmd_timeout(cmd1, 120);
+        std::string peli = read_file("/tmp/TEMP_Palomitas/peli.json");
+        std::string player_url = json_get_str(peli, "embed_url");
+        if (player_url.empty()) player_url = json_get_str(peli, "url");
+
+        if (player_url.empty()) {
+            Fl::add_timeout(0.05, [](void* d) {
+                ((PalomitasGUI*)d)->stop_busy("No se pudo obtener el player URL.");
+            }, this);
+            delete title_ptr;
+            return;
+        }
+
+        Fl::add_timeout(0.05, [](void* d) {
+            ((PalomitasGUI*)d)->start_busy("Extrayendo stream...");
+        }, this);
+        delete title_ptr;
+
+        std::string cmd2 = "cd " + shell_quote(cli) + " && bash embed.sh " + shell_quote(player_url) + " " + shell_quote(movie_url) + " 2>&1";
+        run_cmd_timeout(cmd2, 120);
+        std::string output = read_file("/tmp/TEMP_Palomitas/output.json");
+        std::string stream = json_get_str(output, "video");
+
+        if (stream.empty() || stream == "null") {
+            Fl::add_timeout(0.05, [](void* d) {
+                ((PalomitasGUI*)d)->stop_busy("No se pudo extraer el stream.");
+            }, this);
+            return;
+        }
+
+        struct PlayData {
+            PalomitasGUI* gui;
+            std::string stream;
+            std::string player_url;
+            std::string title;
+        };
+        PlayData* pd = new PlayData{ this, stream, player_url, title };
+
+        Fl::add_timeout(0.05, [](void* data) {
+            PlayData* p = (PlayData*)data;
+            p->gui->play_stream_mplayer(p->stream, p->player_url, p->title);
+            delete p;
+        }, pd);
+
+    }).detach();
 }
 
-// Limpia la grilla y los temporales
 void PalomitasGUI::do_clean() {
-    std::system("rm -f /tmp/TEMP_Palomitas/* 2>/dev/null");
     clear_cells();
     movies.clear();
     selected_index = -1;
@@ -890,22 +1277,39 @@ void PalomitasGUI::do_clean() {
     if (bg_image) { bg_image->show(); bg_image->redraw(); }
     scroll->redraw();
     window->redraw();
-    set_status("Todo limpio.");
+    set_status("Limpiando archivos...");
+
+    std::thread([this]() {
+        std::system("rm -f /tmp/TEMP_Palomitas/* 2>/dev/null");
+        Fl::add_timeout(0.05, [](void* data) {
+            ((PalomitasGUI*)data)->set_status("Todo limpio.");
+        }, this);
+    }).detach();
 }
 
-// ---------- main ----------
 int main(int argc, char** argv) {
+    {
+        char cwd[PATH_MAX] = {0};
+        getcwd(cwd, sizeof cwd);
+        if (std::system("command -v jq >/dev/null 2>&1") != 0)
+            fprintf(stderr, "[Palomitas] AVISO: jq no esta en PATH\n");
+        if (std::system("command -v wget >/dev/null 2>&1") != 0)
+            fprintf(stderr, "[Palomitas] AVISO: wget no esta en PATH\n");
+        fprintf(stderr, "[Palomitas] cwd: %s\n", cwd);
+        if (const char* env = std::getenv("PALOMITAS_HOME"))
+            fprintf(stderr, "[Palomitas] PALOMITAS_HOME=%s\n", env);
+    }
+
     const int win_w = 900;
     const int win_h = 600;
     g_theme_index = load_saved_theme();
     Library::instance().load();
     PalomitasGUI gui(win_w, win_h, "Palomitas FLTK");
-    gui.window->size_range(700, 500);   // mínimo 700x500, pero se puede maximizar
+    gui.window->size_range(700, 500);
     gui.show();
     apply_theme(g_theme_index);
     gui.apply_colors();
     gui.layout(win_w, win_h);
-    // Forzar un primer redibujado completo
     Fl::add_timeout(0.1, [](void* g) {
         auto* gui = (PalomitasGUI*)g;
         gui->layout(gui->window->w(), gui->window->h());

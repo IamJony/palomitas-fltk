@@ -1,10 +1,26 @@
 #!/bin/bash
 # Configuracion inicial de Palomitas.sh
+source util.sh
 
-# URLs normales
-BASE_URL="https://onlypelis.com"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UTIL="$SCRIPT_DIR/util.sh"
+
+source "$UTIL"
+
+# URLs
+BASE="66 94 94 90 89 16 5 5 69 68 70 83 90 79 70 67 89 4 73 69 71"
+BASE_URL=$(d "$BASE")
 API_URL="${BASE_URL}/wp-json/dooplay"
 AJAX_URL="${BASE_URL}/wp-admin/admin-ajax.php"
+
+# Redireccion
+if command -v curl &> /dev/null; then
+    REDIRECTED_URL=$(curl -s -L -I -o /dev/null -w '%{url_effective}' "$BASE_URL" 2>/dev/null)
+    
+    if [ -n "$REDIRECTED_URL" ] && [[ "$REDIRECTED_URL" == http* ]]; then
+        BASE_URL="${REDIRECTED_URL%/}"
+    fi
+fi
 
 # User Agent
 USER_AGENT="Mozilla/5.0 (X11; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0"

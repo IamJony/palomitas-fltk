@@ -65,7 +65,13 @@ if [ -n "$EMBED_URL" ]; then
 else
     # Si falla, guardamos el JSON crudo para depurar
     echo "$RESPONSE" > "$TEMP_DIR/peli.json"
-    log_error "No se pudo extraer el iframe del JSON"
+if [ -z "$EMBED_URL" ]; then
+log_warn "Advertencia: No se detectó 'embed_url' con el patrón habitual, pero se continuará."
+    
 fi
+fi
+
+
+
 
 cleanup

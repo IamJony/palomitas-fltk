@@ -53,7 +53,6 @@ mksquashfs "$P" "$OUT/$APP.tcz" -all-root -noappend -no-progress -b 4096 -no-xat
 (cd "$P" && find usr -type f | sed 's|^|/|' | sort) > "$OUT/$APP.tcz.list"
 rm -rf "$P"
 
-# Dependencias (sin Xorg, sin libXtst, sin libXrandr)
 printf '%s\n' \
     fltk-1.3.tcz \
     curl.tcz \
