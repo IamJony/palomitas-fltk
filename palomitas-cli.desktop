@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=palomitas-cli
+Comment=Mira peliculas en español (terminal)
+Exec=x-terminal-emulator -e palomitas-cli
+Icon=palomitas
+Terminal=true
+Type=Application
+Categories=Video;
