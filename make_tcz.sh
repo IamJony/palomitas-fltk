@@ -8,7 +8,7 @@ LDFLAGS  ?=
 FLTK_CFLAGS := $(shell fltk-config --cxxflags 2>/dev/null)
 FLTK_LDFLAGS:= $(shell fltk-config --ldflags 2>/dev/null)
 
-# Si fltk-config falla, usar flags manuales de Tiny Core
+# Si fltk-config falla o no devuelve -lfltk, usar flags manuales
 ifeq ($(strip $(FLTK_LDFLAGS)),)
   FLTK_LDFLAGS := -L/usr/local/lib -lfltk -ldl -lm -lXext -lX11
 endif
@@ -16,7 +16,8 @@ endif
 CXXFLAGS += $(FLTK_CFLAGS) -Isrc
 CFLAGS   += -Isrc
 
-LDFLAGS  += $(FLTK_LDFLAGS) -lfltk_images -lstdc++ -lpthread -ldl -lm
+# Orden importa: -lfltk antes de -lfltk_images
+LDFLAGS  += $(FLTK_LDFLAGS) -lfltk -lfltk_images -lstdc++ -lpthread -ldl -lm
 
 CXX_SRCS := src/Palomitas-GUI.cpp src/themes.cpp src/library.cpp
 C_SRCS   := src/cJSON.c
