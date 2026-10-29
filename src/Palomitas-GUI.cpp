@@ -702,52 +702,36 @@ public:
     void download_posters_parallel(const std::vector<size_t>& pending);
 };
 
-// Descarga las carátulas en paralelo usando wget (más estable en Tiny Core)
+// Descarga las carátulas usando wget de forma directa y secuencial (la forma más estable)
 void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending) {
     if (pending.empty()) return;
-    std::string jobs_file = "/tmp/TEMP_Palomitas/_dl_jobs.txt";
-    {
-        std::ofstream jf(jobs_file);
-        for (size_t idx : pending) {
-            const MovieItem& m = movies[idx];
-            // Pasamos la URL original y la variante 420x630 como respaldo
-            jf << m.id << '\t' << m.img << '\t' << upgrade_image_url(m.img) << '\n';
+
+    // Aseguramos que el directorio existe
+    std::system("mkdir -p /tmp/TEMP_Palomitas");
+
+    for (size_t idx : pending) {
+        const MovieItem& m = movies[idx];
+        std::string out = "/tmp/TEMP_Palomitas/poster_" + m.id + ".img";
+
+        // 1. Intentamos la URL original
+        std::string cmd = "wget -q --no-check-certificate --timeout=20 --tries=1 -O '" + out + "' '" + m.img + "'";
+        std::system(cmd.c_str());
+
+        // 2. Comprobamos si se descargó algo válido (más de 1KB)
+        struct stat st;
+        if (stat(out.c_str(), &st) != 0 || st.st_size < 1000) {
+            // 3. Si falló, probamos la variante 420x630
+            std::string alt_url = upgrade_image_url(m.img);
+            if (alt_url != m.img) {
+                std::string cmd2 = "wget -q --no-check-certificate --timeout=20 --tries=1 -O '" + out + "' '" + alt_url + "'";
+                std::system(cmd2.c_str());
+            }
         }
     }
     
-    std::string script = "/tmp/TEMP_Palomitas/_dl_one.sh";
-    std::string log_file = "/tmp/TEMP_Palomitas/download.log";
-    {
-        std::ofstream sf(script);
-        sf << "#!/bin/sh\n"
-              "line=\"$1\"\n"
-              "id=$(echo \"$line\" | cut -f1)\n"
-              "orig=$(echo \"$line\" | cut -f2)\n"
-              "big=$(echo \"$line\" | cut -f3)\n"
-              "out=\"/tmp/TEMP_Palomitas/poster_${id}.img\"\n"
-              "ua='Mozilla/5.0 (X11; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0'\n"
-              "ref='https://onlypelis.com/'\n"
-              "try_one() {\n"
-              // SIN 'local' para compatibilidad con ash/BusyBox
-              "  url=\"$1\"; label=\"$2\"\n"
-              "  rm -f \"$out\"\n"
-              // wget con opciones largas y referer en formato header
-              "  wget -q --no-check-certificate --timeout=30 --tries=2 -U \"$ua\" --header=\"Referer: $ref\" -O \"$out\" \"$url\" 2>>" + log_file + "\n"
-              "  sz=$(stat -c%s \"$out\" 2>/dev/null || echo 0)\n"
-              "  if [ \"$sz\" -gt 1000 ]; then \n"
-              "      echo \"[DL $id] OK ($sz B) <- $label\" >> " + log_file + "\n"
-              "      return 0; \n"
-              "  fi\n"
-              "  echo \"[DL $id] FALLO: Tamaño $sz, URL: $url\" >> " + log_file + "\n"
-              "  return 1\n"
-              "}\n"
-              // Intentamos la original, si falla probamos la de 420x630
-              "try_one \"$orig\" \"orig\" || try_one \"$big\" \"big(420x630)\" || rm -f \"$out\"\n";
-    }
-    std::system(("chmod +x '" + script + "'").c_str());
-    std::system(("rm -f " + log_file).c_str());
-    // Ejecutamos en paralelo (8 hilos)
-    std::system(("cat '" + jobs_file + "' | xargs -P 8 -n 1 -d '\\n' '" + script + "'").c_str());
+    // Pequeña pausa para asegurar que el sistema de archivos ha escrito todo
+    usleep(100000);
+    Fl::flush();
 }
 
 // Reconstruye la grilla de carátulas
