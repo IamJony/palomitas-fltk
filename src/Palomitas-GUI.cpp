@@ -728,11 +728,12 @@ void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending)
               "ua='Mozilla/5.0 (X11; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0'\n"
               "ref='https://onlypelis.com/'\n"
               "try_one() {\n"
-              "  local url=\"$1\"; local label=\"$2\"\n"
+              // SIN 'local' para compatibilidad con ash/BusyBox
+              "  url=\"$1\"; label=\"$2\"\n"
               "  rm -f \"$out\"\n"
-              // wget con --no-check-certificate y headers personalizados
-              "  wget -q --no-check-certificate --timeout=30 --tries=2 -U \"$ua\" --referer=\"$ref\" -O \"$out\" \"$url\" 2>>" + log_file + "\n"
-              "  local sz=$(stat -c%s \"$out\" 2>/dev/null || echo 0)\n"
+              // wget con opciones largas y referer en formato header
+              "  wget -q --no-check-certificate --timeout=30 --tries=2 -U \"$ua\" --header=\"Referer: $ref\" -O \"$out\" \"$url\" 2>>" + log_file + "\n"
+              "  sz=$(stat -c%s \"$out\" 2>/dev/null || echo 0)\n"
               "  if [ \"$sz\" -gt 1000 ]; then \n"
               "      echo \"[DL $id] OK ($sz B) <- $label\" >> " + log_file + "\n"
               "      return 0; \n"
