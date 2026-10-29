@@ -1,13 +1,15 @@
-# Makefile reparado - Asegura compilación C++ con g++ y enlazado con libstdc++
+# Makefile para Palomitas - Corregido para Tiny Core Linux
+# Ubicación: Raíz del proyecto. Los fuentes están en src/
+
 SRC      = src
 CXX      = g++
 CC       = gcc
 
-# Flags de FLTK y C++11
-CXXFLAGS = $(shell fltk-config --cxxflags 2>/dev/null) -std=c++11 -O2 -Wall
+# -fno-rtti es CRÍTICO en Tiny Core para evitar errores de typeinfo con FLTK
+CXXFLAGS = $(shell fltk-config --cxxflags 2>/dev/null) -std=c++11 -O2 -Wall -fno-rtti
 CFLAGS   = -O2 -Wall
 
-# Enlazado: FLTK + imágenes + matemáticas + hilos + libstdc++ explícita
+# Enlazado: FLTK base + FLTK imágenes + matemáticas + hilos + libstdc++
 LDFLAGS  = $(shell fltk-config --ldflags 2>/dev/null) -lfltk_images -lm -lpthread -lstdc++
 
 OBJS   = $(SRC)/Palomitas-GUI.o $(SRC)/themes.o $(SRC)/library.o $(SRC)/cJSON.o
@@ -15,11 +17,11 @@ TARGET = palomitas
 
 all: $(TARGET)
 
-# El enlazado final SIEMPRE se hace con g++
+# Enlazado final (siempre con g++)
 $(TARGET): $(OBJS)
 	$(CXX) -o $@ $(OBJS) $(LDFLAGS)
 
-# Archivos C++ (usar g++)
+# Compilación de archivos C++ (Usa CXXFLAGS que incluye -fno-rtti)
 $(SRC)/Palomitas-GUI.o: $(SRC)/Palomitas-GUI.cpp $(SRC)/themes.h $(SRC)/library.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -29,7 +31,7 @@ $(SRC)/themes.o: $(SRC)/themes.cpp $(SRC)/themes.h
 $(SRC)/library.o: $(SRC)/library.cpp $(SRC)/library.h $(SRC)/cJSON.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Archivo C (usar gcc)
+# Compilación de cJSON (Usa CFLAGS porque es C puro)
 $(SRC)/cJSON.o: $(SRC)/cJSON.c $(SRC)/cJSON.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
