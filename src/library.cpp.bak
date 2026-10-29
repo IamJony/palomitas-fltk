@@ -93,7 +93,7 @@ void Library::rename_playlist(const std::string& old_name, const std::string& ne
 }
 void Library::remove_playlist(const std::string& name) {
     playlists.erase(std::remove_if(playlists.begin(), playlists.end(),
-        [&](const auto& p){ return p.first == name; }), playlists.end()); save();
+        [[&](const std::pair<std::string, std::vector<MovieItem>>& p){ return p.first == name; }](const std::pair<std::string, std::vector<MovieItem>>& p){ return p.first == name; }), playlists.end()); save();
 }
 void Library::add_to_playlist(const std::string& name, const MovieItem& it) {
     for (auto& pl : playlists) if (pl.first == name) {
