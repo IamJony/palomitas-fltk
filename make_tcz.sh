@@ -38,7 +38,7 @@ install -m 644 "$D/palomitas-cli/util.sh"      "$STAGE/usr/local/bin/palomitas-c
 # Wrapper CLI en /usr/local/bin/palomitas-cli-launcher (no choca con el directorio)
 cat > "$STAGE/usr/local/bin/palomitas-cli-launcher" <<'WRAPPER'
 #!/bin/sh
-exec /usr/local/bin/palomitas-cli/Palomitas.sh "$@"
+cd /usr/local/bin/palomitas-cli/ && exec bash ./Palomitas.sh "$@"
 WRAPPER
 chmod 755 "$STAGE/usr/local/bin/palomitas-cli-launcher"
 
@@ -59,7 +59,7 @@ mksquashfs "$STAGE" "$OUT/$APP.tcz" -all-root -noappend -no-progress -b 4096 -no
 rm -rf "$STAGE"
 
 # Dependencias
-printf '%s\n' fltk-1.3.tcz curl.tcz jq.tcz yt-dlp.tcz mplayer.tcz > "$OUT/$APP.tcz.dep"
+printf '%s\n' fltk-1.3.tcz curl.tcz jq.tcz bash.tcz curl.tcz yt-dlp.tcz mplayer-cli.tcz > "$OUT/$APP.tcz.dep"
 
 # Checksum
 (cd "$OUT" && md5sum $APP.tcz > $APP.tcz.md5.txt)

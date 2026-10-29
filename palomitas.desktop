@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Palomitas
+Comment=Mira peliculas en español
+Exec=palomitas-fltk
+Icon=palomitas
+X-FullPathIcon=/usr/local/share/pixmaps/palomitas.png
+Terminal=false
+Type=Application
+Categories=Video;
