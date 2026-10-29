@@ -71,7 +71,7 @@ Title:          $APP.tcz
 Description:    palomitas: ver peliculas en espanol
 Version:        $VER
 Author:         IamJony
-Original-site:  https://github.com/IamJony
+Original-site:  https://github.com/IamJony/palomitas-fltk
 Copying-policy: MIT
 Size:           ${SIZE}K
 Extension_by:   IamJony
