@@ -26,6 +26,7 @@ Busca y reproduce películas en español desde la terminal de Linux o mediante u
 - `mplayer` (o `mpv`)
 - `curl`
 - `jq`
+- `bash`
 - `yt-dlp`
 - `python3` (requerido por `yt-dlp`)
 - `ffmpeg` (opcional, mejora la extracción con `yt-dlp`)
