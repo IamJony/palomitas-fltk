@@ -1,27 +1,35 @@
-CXX      = g++
-CXXFLAGS = -std=c++17 -O2 -Wall -Isrc -D_GLIBCXX_USE_CXX11_ABI=0
-LIBS     = `fltk-config --ldflags` -lfltk_images
+# Makefile para Palomitas - corregido para incluir fltk_images
+SRC      = src
+CXX      ?= g++
+CC       ?= gcc
+CXXFLAGS ?= $(shell fltk-config --cxxflags 2>/dev/null) -std=c++11 -O2 -Wall
+CFLAGS   ?= -O2 -Wall
+LDFLAGS  ?= $(shell fltk-config --ldflags 2>/dev/null) -lfltk_images -lm -lpthread
 
-TARGET = palomitas-fltk
-SRCS   = src/Palomitas-GUI.cpp src/themes.cpp src/library.cpp src/cJSON.c
-OBJS   = $(SRCS:.cpp=.o)
-OBJS   := $(OBJS:.c=.o)
+OBJS   = $(SRC)/Palomitas-GUI.o $(SRC)/themes.o $(SRC)/library.o $(SRC)/cJSON.o
+TARGET = palomitas
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) `fltk-config --cxxflags` -o $@ $^ $(LIBS) -lstdc++
+	$(CXX) -o $@ $(OBJS) $(LDFLAGS)
 
-src/%.o: src/%.cpp src/themes.h src/library.h src/cJSON.h
-	$(CXX) $(CXXFLAGS) `fltk-config --cxxflags` -c -o $@ $<
+$(SRC)/Palomitas-GUI.o: $(SRC)/Palomitas-GUI.cpp $(SRC)/themes.h $(SRC)/library.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-src/%.o: src/%.c
-	$(CC) -O2 -Wall -c -o $@ $<
+$(SRC)/themes.o: $(SRC)/themes.cpp $(SRC)/themes.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(SRC)/library.o: $(SRC)/library.cpp $(SRC)/library.h $(SRC)/cJSON.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(SRC)/cJSON.o: $(SRC)/cJSON.c $(SRC)/cJSON.h
+	$(CC) $(CFLAGS) -c $< -o $@
 
 run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(TARGET) src/*.o
+	rm -f $(SRC)/*.o $(TARGET)
 
-.PHONY: all run clean
+.PHONY: all clean run
