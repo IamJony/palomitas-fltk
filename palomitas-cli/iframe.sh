@@ -5,32 +5,24 @@ source config.sh
 # Validar argumentos
 if [ $# -eq 0 ]; then
     echo "Uso: $0 <URL DE LA PELICULA>"
-    echo "Ejemplo: $0 https://XXXXXX.com/pelicula/rocky/"
     exit 1
 fi
 
 URL_PELICULA="$1"
 
-
-#echo -e "${CYAN}=== Analizando: $URL_PELICULA ===${NC}"
-
-# Inicializar sesión
 init_session
 
-# 1. Descargar página
+# 1. Descargar página usando wget
 log_info "Descargando página..."
-curl -s -b "$COOKIE_FILE" "$URL_PELICULA" \
-    -H "User-Agent: $USER_AGENT" \
-    -o "$TEMP_HTML"
+wget -q --no-check-certificate -U "$USER_AGENT" --load-cookies="$COOKIE_FILE" -O "$TEMP_HTML" "$URL_PELICULA"
 
-# Verificar si fue exitoso
-if [ $? -ne 0 ]; then
+if [ $? -ne 0 ] || [ ! -s "$TEMP_HTML" ]; then
     log_error "Error al descargar la página"
     cleanup
     exit 1
 fi
 
-# 2. Extraer POST_ID del shortlink
+# 2. Extraer POST_ID
 log_info "Extrayendo ID de la película..."
 POST_ID=$(grep "shortlink" "$TEMP_HTML" | grep -o "?p=[0-9]\+" | head -1 | sed 's/?p=//')
 
@@ -42,55 +34,38 @@ fi
 
 log_success "ID encontrado: $POST_ID"
 
-# 3. Hacer petición AJAX para obtener datos del reproductor
+# 3. Hacer petición AJAX usando wget (POST)
 log_info "Consultando API del reproductor..."
-RESPONSE=$(curl -s -b "$COOKIE_FILE" "$AJAX_URL" \
-    --compressed \
-    -X POST \
-    -H "User-Agent: $USER_AGENT" \
-    -H "Accept: */*" \
-    -H "Accept-Language: es-MX,es;q=0.8,en-US;q=0.5,en;q=0.3" \
-    -H "Accept-Encoding: gzip, deflate, br, zstd" \
-    -H "Content-Type: application/x-www-form-urlencoded; charset=UTF-8" \
-    -H "X-Requested-With: XMLHttpRequest" \
-    -H "Origin: $BASE_URL" \
-    -H "Sec-GPC: 1" \
-    -H "Connection: keep-alive" \
-    -H "Referer: $URL_PELICULA" \
-    -H "Sec-Fetch-Dest: empty" \
-    -H "Sec-Fetch-Mode: cors" \
-    -H "Sec-Fetch-Site: same-origin" \
-    -H "Pragma: no-cache" \
-    -H "Cache-Control: no-cache" \
-    -H "TE: trailers" \
-    --data-raw "action=doo_player_ajax&post=$POST_ID&nume=1&type=movie")
+# wget para POST: --post-data y --header
+RESPONSE=$(wget -q --no-check-certificate -O - \
+    --header="X-Requested-With: XMLHttpRequest" \
+    --header="Referer: $URL_PELICULA" \
+    --header="User-Agent: $USER_AGENT" \
+    --post-data="action=doo_player_ajax&post=$POST_ID&nume=1&type=movie" \
+    "$AJAX_URL")
 
-if [ $? -ne 0 ]; then
+if [ -z "$RESPONSE" ]; then
     log_error "Error al consultar la API"
     cleanup
     exit 1
 fi
 
-# Guardar respuesta en peli.json
-echo "$RESPONSE" > "$TEMP_DIR"/peli.json
+# 4. Extraer la URL del iframe del JSON de respuesta
+EMBED_URL=$(echo "$RESPONSE" | grep -o 'src=\\*"[^"]*\\*"' | head -1 | sed 's/src=\\*"//;s/\\*"//')
 
-# Verificar que se creó el archivo
-if [ -f ""$TEMP_DIR"/peli.json" ]; then
-    log_success "Datos guardados en peli.json"
-    
-    # Mostrar contenido (opcional, para depuración)
-    if command -v jq &> /dev/null; then
-        echo ""
-        echo "Contenido de peli.json:"
-        jq . "$TEMP_DIR"/peli.json
-    else
-        echo "Respuesta: $RESPONSE"
-    fi
-else
-    log_error "No se pudo crear peli.json"
-    echo "Respuesta recibida:"
-    echo "$RESPONSE"
+# Si no encontramos el src, intentamos con comillas simples
+if [ -z "$EMBED_URL" ]; then
+    EMBED_URL=$(echo "$RESPONSE" | grep -o "src='[^']*'" | head -1 | sed "s/src='//;s/'//")
 fi
 
-# Limpiar archivos temporales
+# 5. Guardar el JSON final
+if [ -n "$EMBED_URL" ]; then
+    echo "{\"embed_url\": \"$EMBED_URL\", \"url\": \"$EMBED_URL\"}" > "$TEMP_DIR/peli.json"
+    log_success "Player URL extraído: $EMBED_URL"
+else
+    # Si falla, guardamos el JSON crudo para depurar
+    echo "$RESPONSE" > "$TEMP_DIR/peli.json"
+    log_error "No se pudo extraer el iframe del JSON"
+fi
+
 cleanup
