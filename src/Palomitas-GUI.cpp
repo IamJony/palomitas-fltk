@@ -702,8 +702,7 @@ public:
     void download_posters_parallel(const std::vector<size_t>& pending);
 };
 
-// Descarga las carátulas en paralelo (3 intentos: 420x630, 683x1024, original)
-// Forzado a ignorar certificados SSL (-k y --insecure) y con logs detallados
+// Descarga las carátulas en paralelo usando wget (más estable en Tiny Core)
 void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending) {
     if (pending.empty()) return;
     std::string jobs_file = "/tmp/TEMP_Palomitas/_dl_jobs.txt";
@@ -711,8 +710,8 @@ void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending)
         std::ofstream jf(jobs_file);
         for (size_t idx : pending) {
             const MovieItem& m = movies[idx];
-            jf << m.id << '\t' << upgrade_image_url(m.img) << '\t'
-               << upgrade_image_url_alt(m.img) << '\t' << m.img << '\n';
+            // Pasamos la URL original y la variante 420x630 como respaldo
+            jf << m.id << '\t' << m.img << '\t' << upgrade_image_url(m.img) << '\n';
         }
     }
     
@@ -720,35 +719,33 @@ void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending)
     std::string log_file = "/tmp/TEMP_Palomitas/download.log";
     {
         std::ofstream sf(script);
-        sf << "#!/bin/bash\n"
+        sf << "#!/bin/sh\n"
               "line=\"$1\"\n"
               "id=$(echo \"$line\" | cut -f1)\n"
-              "big=$(echo \"$line\" | cut -f2)\n"
-              "alt=$(echo \"$line\" | cut -f3)\n"
-              "orig=$(echo \"$line\" | cut -f4)\n"
+              "orig=$(echo \"$line\" | cut -f2)\n"
+              "big=$(echo \"$line\" | cut -f3)\n"
               "out=\"/tmp/TEMP_Palomitas/poster_${id}.img\"\n"
               "ua='Mozilla/5.0 (X11; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0'\n"
               "ref='https://onlypelis.com/'\n"
               "try_one() {\n"
-              "  local url=\"$1\"; local label=\"$2\"; local min=\"$3\"\n"
+              "  local url=\"$1\"; local label=\"$2\"\n"
               "  rm -f \"$out\"\n"
-              // -k y --insecure fuerzan a ignorar certificados SSL
-              "  http_code=$(curl -s -k --insecure -L --connect-timeout 15 --max-time 30 -A \"$ua\" -H \"Referer: $ref\" -w \"%{http_code}\" -o \"$out\" \"$url\" 2>>" + log_file + ")\n"
+              // wget con --no-check-certificate y headers personalizados
+              "  wget -q --no-check-certificate --timeout=30 --tries=2 -U \"$ua\" --referer=\"$ref\" -O \"$out\" \"$url\" 2>>" + log_file + "\n"
               "  local sz=$(stat -c%s \"$out\" 2>/dev/null || echo 0)\n"
-              "  if [ \"$http_code\" -eq 200 ] && [ \"$sz\" -gt \"$min\" ]; then \n"
+              "  if [ \"$sz\" -gt 1000 ]; then \n"
               "      echo \"[DL $id] OK ($sz B) <- $label\" >> " + log_file + "\n"
               "      return 0; \n"
               "  fi\n"
-              "  echo \"[DL $id] FALLO: HTTP $http_code, Tamaño $sz, URL: $url\" >> " + log_file + "\n"
+              "  echo \"[DL $id] FALLO: Tamaño $sz, URL: $url\" >> " + log_file + "\n"
               "  return 1\n"
               "}\n"
-              // Intentamos en orden: original, big, alt.
-              "try_one \"$orig\" \"orig\" 5000 || try_one \"$big\" \"big(420x630)\" 15000 || try_one \"$alt\" \"alt(683x1024)\" 20000 || rm -f \"$out\"\n";
+              // Intentamos la original, si falla probamos la de 420x630
+              "try_one \"$orig\" \"orig\" || try_one \"$big\" \"big(420x630)\" || rm -f \"$out\"\n";
     }
     std::system(("chmod +x '" + script + "'").c_str());
-    // Limpiamos el log viejo antes de empezar
     std::system(("rm -f " + log_file).c_str());
-    // Ejecutamos las descargas en paralelo (8 hilos)
+    // Ejecutamos en paralelo (8 hilos)
     std::system(("cat '" + jobs_file + "' | xargs -P 8 -n 1 -d '\\n' '" + script + "'").c_str());
 }
 
