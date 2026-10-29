@@ -703,6 +703,7 @@ public:
 };
 
 // Descarga las carátulas en paralelo (3 intentos: 420x630, 683x1024, original)
+// Forzado a ignorar certificados SSL (-k y --insecure) y con logs detallados
 void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending) {
     if (pending.empty()) return;
     std::string jobs_file = "/tmp/TEMP_Palomitas/_dl_jobs.txt";
@@ -714,7 +715,9 @@ void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending)
                << upgrade_image_url_alt(m.img) << '\t' << m.img << '\n';
         }
     }
+    
     std::string script = "/tmp/TEMP_Palomitas/_dl_one.sh";
+    std::string log_file = "/tmp/TEMP_Palomitas/download.log";
     {
         std::ofstream sf(script);
         sf << "#!/bin/bash\n"
@@ -729,19 +732,23 @@ void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending)
               "try_one() {\n"
               "  local url=\"$1\"; local label=\"$2\"; local min=\"$3\"\n"
               "  rm -f \"$out\"\n"
-              "  curl -s -L --fail --retry 2 --max-time 20 -A \"$ua\" -H \"Referer: $ref\" -o \"$out\" \"$url\" >/dev/null 2>&1\n"
+              // -k y --insecure fuerzan a ignorar certificados SSL
+              "  http_code=$(curl -s -k --insecure -L --connect-timeout 15 --max-time 30 -A \"$ua\" -H \"Referer: $ref\" -w \"%{http_code}\" -o \"$out\" \"$url\" 2>>" + log_file + ")\n"
               "  local sz=$(stat -c%s \"$out\" 2>/dev/null || echo 0)\n"
-              "  if [ \"$sz\" -gt \"$min\" ]; then echo \"[DL $id] OK  $sz B  <- $label\"; return 0; fi\n"
+              "  if [ \"$http_code\" -eq 200 ] && [ \"$sz\" -gt \"$min\" ]; then \n"
+              "      echo \"[DL $id] OK ($sz B) <- $label\" >> " + log_file + "\n"
+              "      return 0; \n"
+              "  fi\n"
+              "  echo \"[DL $id] FALLO: HTTP $http_code, Tamaño $sz, URL: $url\" >> " + log_file + "\n"
               "  return 1\n"
               "}\n"
-              "try_one \"$big\" \"big(420x630)\" 15000 && exit 0\n"
-              "try_one \"$alt\" \"alt(683x1024)\" 20000 && exit 0\n"
-              "try_one \"$orig\" \"orig\" 5000 && exit 0\n"
-              "rm -f \"$out\"\n"
-              "echo \"[DL $id] FAIL\"\n"
-              "exit 1\n";
+              // Intentamos en orden: original, big, alt.
+              "try_one \"$orig\" \"orig\" 5000 || try_one \"$big\" \"big(420x630)\" 15000 || try_one \"$alt\" \"alt(683x1024)\" 20000 || rm -f \"$out\"\n";
     }
     std::system(("chmod +x '" + script + "'").c_str());
+    // Limpiamos el log viejo antes de empezar
+    std::system(("rm -f " + log_file).c_str());
+    // Ejecutamos las descargas en paralelo (8 hilos)
     std::system(("cat '" + jobs_file + "' | xargs -P 8 -n 1 -d '\\n' '" + script + "'").c_str());
 }
 
