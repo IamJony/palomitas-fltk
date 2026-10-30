@@ -8,7 +8,7 @@ Busca y reproduce películas en español desde la terminal de Linux o mediante u
 ## Características
 
 - **GUI en FLTK** con grilla de carátulas, temas, favoritos y búsqueda.
-- **CLI en bash** para usar desde terminal.
+- **CLI en bash** para usar desde terminal. Lanza con el comando `palomitas-cli-launcher`
 - Reproductor con `mplayer` o `mpv` + `yt-dlp`.
 - Favoritos persistentes en `~/.config/palomitas-fltk/data.json`.
 
