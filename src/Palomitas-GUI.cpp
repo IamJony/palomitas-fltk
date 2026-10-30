@@ -48,8 +48,6 @@ static std::string shell_quote(const std::string& s) {
     return out;
 }
 
-// Ejecuta un comando con timeout propio usando fork/exec (no depende de popen
-// ni de timeout ni de bash -c). Universal: Linux, Termux, macOS, BSD.
 static std::string run_cmd_timeout(const std::string& cmd, int timeout_sec = 120) {
     int pipefd[2];
     if (pipe(pipefd) != 0) return "";
@@ -127,9 +125,6 @@ static std::string json_get_str(const std::string& json, const std::string& key)
     return "";
 }
 
-// Convierte cualquier URL de carátula a su variante de máxima resolución
-// (el servidor sirve hasta -768x1152.<ext>). Elimina cualquier sufijo -NxM
-// previo y añade -768x1152 antes de la extensión. Respeta ?query/#hash.
 static std::string to_max_res_url(const std::string& url) {
     if (url.empty()) return url;
     std::string base = url, suffix;
@@ -279,7 +274,7 @@ public:
         fl_pie(x(), y() + h() - 2*r, 2*r, 2*r, 180, 270);
         fl_pie(x() + w() - 2*r, y() + h() - 2*r, 2*r, 2*r, 270, 360);
         if (label()) {
-            fl_font(FL_HELVETICA_BOLD, 13);
+            fl_font(FL_HELVETICA_BOLD, 12);
             fl_color(active_r() ? fg : C_DIM);
             fl_draw(label(), x(), y(), w(), h(), FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
         }
@@ -308,37 +303,6 @@ public:
     }
 };
 
-// ---------- Enlace clicable ----------
-class LinkLabel : public Fl_Widget {
-public:
-    std::string text;
-    int size = 12;
-    Fl_Font font = FL_HELVETICA;
-    bool hover = false;
-    std::function<void()> on_click;
-    LinkLabel(int x, int y, int w, int h, const char* t = "") : Fl_Widget(x, y, w, h), text(t) {}
-    void draw() override {
-        fl_font(font, size);
-        fl_color(hover ? C_ACCENT : C_DIM);
-        fl_draw(text.c_str(), x(), y(), w(), h(), FL_ALIGN_RIGHT | FL_ALIGN_INSIDE);
-    }
-    int handle(int e) override {
-        switch (e) {
-            case FL_ENTER: hover = true; redraw(); return 1;
-            case FL_LEAVE: hover = false; redraw(); return 1;
-            case FL_PUSH:
-                if (Fl::event_button() == FL_LEFT_MOUSE) {
-                    if (on_click) on_click();
-                    return 1;
-                }
-                return 0;
-            default:
-                return Fl_Widget::handle(e);
-        }
-    }
-};
-
-
 // ---------- Celda de película ----------
 class MovieCell : public Fl_Widget {
 public:
@@ -362,7 +326,6 @@ public:
     void draw() override {
         fl_push_clip(x(), y(), w(), h());
 
-        // Fondo redondeado
         int r = 6;
         fl_color(selected ? C_SEL : C_PANEL);
         fl_rectf(x(), y() + r, w(), h() - 2*r);
@@ -372,8 +335,6 @@ public:
         fl_pie(x(), y() + h() - 2*r, 2*r, 2*r, 180, 270);
         fl_pie(x() + w() - 2*r, y() + h() - 2*r, 2*r, 2*r, 270, 360);
 
-        // Área de imagen: celda menos el alto del bloque de texto
-        // (2 líneas de título + 1 de meta + paddings)
         int text_block_h = 62;
         int img_w = w();
         int img_h = h() - text_block_h;
@@ -383,7 +344,6 @@ public:
         Fl_Shared_Image* img = Fl_Shared_Image::get(img_path.c_str());
 
         if (img && img->w() > 0) {
-            // Escalar exactamente al área de imagen (sin recortes manuales)
             Fl_Image* scaled = img->copy(img_w, img_h);
             if (scaled) {
                 scaled->draw(x(), y());
@@ -397,27 +357,20 @@ public:
             fl_draw("Sin imagen", x(), y(), img_w, img_h, FL_ALIGN_CENTER);
         }
 
-        // ----- Bloque de texto debajo de la imagen -----
-        // Padding arriba (imagen -> título)
         int pad_top = 8;
-        // Padding abajo (meta -> borde celda)
-        // Padding lateral
         int pad_x = 5;
 
         int text_y = y() + img_h + pad_top;
         int text_w = w() - pad_x * 2;
 
-        // Título (2 líneas máx)
         std::string t = movie->title;
         fl_color(selected ? FL_WHITE : C_TEXT);
         fl_font(FL_HELVETICA_BOLD, 10);
         fl_draw(t.c_str(), x() + pad_x, text_y, text_w, 28,
                 FL_ALIGN_LEFT | FL_ALIGN_TOP | FL_ALIGN_WRAP | FL_ALIGN_CLIP);
 
-        // Padding entre título y meta
         int pad_mid = 6;
 
-        // Meta: año + IMDb
         fl_color(selected ? FL_WHITE : C_DIM);
         fl_font(FL_HELVETICA, 9);
         std::string meta = movie->year + "  IMDb:" + movie->imdb;
@@ -517,7 +470,6 @@ public:
     ModernButton* clean_btn;
     Label* fav_count_label = nullptr;
     Label* status_label;
-    LinkLabel* github_link = nullptr;
 
     std::vector<MovieItem> movies;
     int selected_index = -1;
@@ -536,7 +488,6 @@ public:
     bool searching = false;
     std::string busy_msg;
 
-    // === Comunicación thread -> GUI sin Fl::awake (Termux-safe) ===
     std::mutex result_mutex;
     bool result_ready = false;
     struct SearchResult {
@@ -565,33 +516,33 @@ public:
         header->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
         header->labelcolor(C_TEXT);
 
-        theme_choice = new Fl_Choice(w - 130, 12, 120, 28, "Tema:");
+        theme_choice = new Fl_Choice(w - 130, 12, 120, 26, "Tema:");
         for (int i = 0; i < theme_count; ++i) theme_choice->add(themes[i].name);
         theme_choice->value(g_theme_index);
         theme_choice->callback(cb_theme, this);
 
-        fav_side_btn = new ModernButton(10, 60, SIDE_W - 20, 40, "Favoritos");
+        fav_side_btn = new ModernButton(10, 60, SIDE_W - 20, 36, "Favoritos");
         fav_side_btn->labelsize(11);
         fav_side_btn->callback(cb_show_favs, this);
 
-        fav_count_label = new Label(10, 104, SIDE_W - 20, 18);
+        fav_count_label = new Label(10, 100, SIDE_W - 20, 16);
         fav_count_label->size = 10;
         fav_count_label->fg_role = 1;
         fav_count_label->al = FL_ALIGN_CENTER;
         fav_count_label->set("0 peliculas");
 
-        back_btn = new ModernButton(w - 290, 12, 90, 28, "Volver");
+        back_btn = new ModernButton(w - 290, 12, 90, 26, "Volver");
         back_btn->callback(cb_back, this);
         back_btn->deactivate();
 
-        search_input = new Fl_Input(SIDE_W + 70, 55, w - SIDE_W - 220, 34, "Buscar:");
+        search_input = new Fl_Input(SIDE_W + 70, 55, w - SIDE_W - 220, 30, "Buscar:");
         search_input->when(FL_WHEN_ENTER_KEY);
         search_input->callback(cb_search, this);
 
-        search_btn = new ModernButton(w - 130, 55, 100, 34, "Buscar");
+        search_btn = new ModernButton(w - 130, 55, 100, 30, "Buscar");
         search_btn->callback(cb_search, this);
 
-        scroll = new Fl_Scroll(SIDE_W + 10, 100, w - SIDE_W - 20, h - 260);
+        scroll = new Fl_Scroll(SIDE_W + 10, 100, w - SIDE_W - 20, h - 150);
         scroll->box(FL_FLAT_BOX);
         scroll_spacer = new Fl_Box(scroll->x(), scroll->y(), scroll->w() - 2, 10);
         scroll->end();
@@ -605,29 +556,27 @@ public:
             if (home_img && home_img->w() > 0) home_shared_img = home_img;
         }
 
-        int bx = SIDE_W + 20;
-        play_btn = new ModernButton(bx, h - 120, 130, 34, "Reproducir");
-        play_btn->callback(cb_play, this);
-        play_btn->deactivate();
+        // ---- Fila inferior: status a la izquierda, botones a la derecha ----
+        int bar_y = h - 34;
+        int bar_h = 28;
 
-        fav_btn = new ModernButton(bx + 145, h - 120, 170, 34, "Favoritos");
+        status_label = new Label(SIDE_W + 10, bar_y, w - SIDE_W - 380, bar_h);
+        status_label->font = FL_HELVETICA;
+        status_label->size = 12;
+        status_label->fg_role = 1;
+        status_label->al = FL_ALIGN_LEFT | FL_ALIGN_INSIDE;
+        status_label->set("Listo. Escribe algo o explora favoritos.");
+
+        clean_btn = new ModernButton(w - 120, bar_y, 100, bar_h, "Limpiar");
+        clean_btn->callback(cb_clean, this);
+
+        fav_btn = new ModernButton(w - 120 - 10 - 170, bar_y, 170, bar_h, "Favoritos");
         fav_btn->callback(cb_fav, this);
         fav_btn->deactivate();
 
-        clean_btn = new ModernButton(w - 130, h - 120, 100, 34, "Limpiar");
-        clean_btn->callback(cb_clean, this);
-
-        status_label = new Label(20, h - 70, w - 180, 30);
-        status_label->font = FL_HELVETICA;
-        status_label->size = 13;
-        status_label->fg_role = 1;
-        status_label->set("Listo. Escribe algo o explora favoritos.");
-
-        github_link = new LinkLabel(w - 150, h - 70, 130, 30, "github/IamJony");
-        github_link->on_click = []() {
-            std::string cmd = "xdg-open https://github.com/IamJony >/dev/null 2>&1 &";
-            std::system(cmd.c_str());
-        };
+        play_btn = new ModernButton(w - 120 - 10 - 170 - 10 - 130, bar_y, 130, bar_h, "Reproducir");
+        play_btn->callback(cb_play, this);
+        play_btn->deactivate();
 
         window->end();
         window->resizable(window);
@@ -638,7 +587,6 @@ public:
 
         check_environment();
 
-        // Sondear resultado de búsqueda cada 100ms (evita Fl::awake en Termux)
         Fl::add_timeout(0.1, poll_search_result_cb, this);
     }
 
@@ -739,21 +687,23 @@ public:
 
     void layout(int W, int H) {
         int rx = SIDE_W + 10;
-        search_input->resize(SIDE_W + 70, 55, W - SIDE_W - 220, 34);
-        search_btn->resize(W - 130, 55, 100, 34);
-        theme_choice->resize(W - 130, 12, 120, 28);
-        back_btn->resize(W - 290, 12, 90, 28);
-        scroll->resize(rx, 100, W - rx - 10, H - 260);
+        search_input->resize(SIDE_W + 70, 55, W - SIDE_W - 220, 30);
+        search_btn->resize(W - 130, 55, 100, 30);
+        theme_choice->resize(W - 130, 12, 120, 26);
+        back_btn->resize(W - 290, 12, 90, 26);
+        scroll->resize(rx, 100, W - rx - 10, H - 150);
         if (bg_image) bg_image->resize(scroll->x(), scroll->y(), scroll->w(), scroll->h());
 
-        int bx = SIDE_W + 20;
-        play_btn->resize(bx, H - 120, 130, 34);
-        fav_btn->resize(bx + 145, H - 120, 170, 34);
-        clean_btn->resize(W - 130, H - 120, 100, 34);
-        status_label->resize(20, H - 70, W - 180, 30);
-        github_link->resize(W - 150, H - 70, 130, 30);
-        fav_side_btn->resize(10, 60, SIDE_W - 20, 40);
-        if (fav_count_label) fav_count_label->resize(10, 104, SIDE_W - 20, 18);
+        // Fila inferior: status izquierda, botones derecha (misma Y)
+        int bar_y = H - 34;
+        int bar_h = 28;
+        clean_btn->resize(W - 120, bar_y, 100, bar_h);
+        fav_btn->resize(W - 120 - 10 - 170, bar_y, 170, bar_h);
+        play_btn->resize(W - 120 - 10 - 170 - 10 - 130, bar_y, 130, bar_h);
+        status_label->resize(SIDE_W + 10, bar_y, W - SIDE_W - 380, bar_h);
+
+        fav_side_btn->resize(10, 60, SIDE_W - 20, 36);
+        if (fav_count_label) fav_count_label->resize(10, 100, SIDE_W - 20, 16);
 
         if (!cells.empty()) {
             rebuild_grid_positions_only();
@@ -792,7 +742,6 @@ public:
         fav_side_btn->bg = C_PANEL; fav_side_btn->fg = C_ACCENT; fav_side_btn->hi = C_BTN_HI;
         if (fav_count_label) fav_count_label->redraw();
         if (bg_image) bg_image->redraw();
-        if (github_link) github_link->redraw();
         for (auto* c : cells) c->redraw();
         scroll->redraw();
         window->redraw();
@@ -912,7 +861,6 @@ public:
         set_status(std::to_string(movies.size()) + " favoritos");
     }
 
-    // Sonda el resultado del thread de búsqueda
     static void poll_search_result_cb(void* data) {
         auto* self = (PalomitasGUI*)data;
         self->poll_search_result();
@@ -971,9 +919,6 @@ public:
     void download_posters_sync(const std::vector<size_t>& pending);
 };
 
-// Descarga las miniaturas pendientes de forma paralela (bloquea hasta terminar).
-// Se llama desde el hilo de búsqueda (NO desde el hilo principal de FLTK)
-// justo antes de crear las celdas, para que aparezcan ya completas.
 void PalomitasGUI::download_posters_sync(const std::vector<size_t>& pending) {
     if (pending.empty()) return;
 
@@ -1007,12 +952,9 @@ void PalomitasGUI::download_posters_sync(const std::vector<size_t>& pending) {
     }
 }
 
-// (compatibilidad) redirige a la versión síncrona
 void PalomitasGUI::download_posters_parallel(const std::vector<size_t>& pending) {
     download_posters_sync(pending);
 }
-
-
 
 void PalomitasGUI::rebuild_grid_positions_only() {
     if (cells.empty() || movies.empty()) return;
@@ -1049,9 +991,6 @@ void PalomitasGUI::rebuild_grid() {
         if (stat(path.c_str(), &st) == 0) std::remove(path.c_str());
         pending.push_back(i);
     }
-    // Descargar TODAS las miniaturas pendientes antes de crear celdas.
-    // Bloquea ~1 s con 6 imágenes, pero la grilla aparece ya completa
-    // (sin "Sin imagen" intermedio).
     download_posters_sync(pending);
 
     if (movies.empty()) {
@@ -1084,9 +1023,6 @@ void PalomitasGUI::rebuild_grid() {
     scroll->add(scroll_spacer);
     scroll->scroll_to(0, 0);
 
-    // Pre-decodificar miniaturas antes del primer pintado.
-    // Con -768x1152 cada una tarda ~250 ms; 6 celdas ~1.5 s total.
-    // Se hace en el hilo principal para evitar carreras con Fl_Shared_Image.
     scroll->redraw();
     scroll->damage(FL_DAMAGE_ALL);
     window->redraw();
@@ -1147,7 +1083,6 @@ void PalomitasGUI::do_search() {
             pending_result.ok = ok;
             result_ready = true;
         }
-        // No usamos Fl::awake: poll_search_result() lo recoge.
     }).detach();
 }
 
@@ -1190,7 +1125,7 @@ void PalomitasGUI::play_stream_mplayer(const std::string& stream_url,
             " --no-part --no-cache-dir --buffer-size 1M"
             " -o - \"" + esc_dq(stream_url) + "\""
             " 2>/tmp/TEMP_Palomitas/ytdlp.log"
-            " | mplayer -demuxer lavf"
+            " | mplayer -zoom -cache 4096 -demuxer lavf"
             " -title \"" + safe_title + "\""
             " -"
             " >/tmp/TEMP_Palomitas/mplayer.log 2>&1";
