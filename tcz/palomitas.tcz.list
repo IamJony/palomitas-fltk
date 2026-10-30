@@ -6,5 +6,6 @@
 /usr/local/bin/palomitas-cli/search.sh
 /usr/local/bin/palomitas-cli/util.sh
 /usr/local/bin/palomitas-fltk
+/usr/local/share/applications/palomitas-cli.desktop
 /usr/local/share/applications/palomitas.desktop
 /usr/local/share/pixmaps/palomitas.png
