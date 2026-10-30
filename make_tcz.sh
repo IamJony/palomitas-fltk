@@ -59,7 +59,7 @@ mksquashfs "$STAGE" "$OUT/$APP.tcz" -all-root -noappend -no-progress -b 4096 -no
 rm -rf "$STAGE"
 
 # Dependencias
-printf '%s\n' fltk-1.3.tcz curl.tcz jq.tcz bash.tcz curl.tcz yt-dlp.tcz mplayer-cli.tcz > "$OUT/$APP.tcz.dep"
+printf '%s\n' fltk-1.3.tcz jq.tcz bash.tcz curl.tcz yt-dlp.tcz mplayer-cli.tcz > "$OUT/$APP.tcz.dep"
 
 # Checksum
 (cd "$OUT" && md5sum $APP.tcz > $APP.tcz.md5.txt)
