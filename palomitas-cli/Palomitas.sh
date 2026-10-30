@@ -310,7 +310,7 @@ play_with_mplayer() {
     yt-dlp --add-header "Referer: $referrer" \
         -S "res:480" -o - "$STREAM_URL" \
         2>/tmp/TEMP_Palomitas/ytdlp.log \
-        | mplayer -demuxer lavf -title "$safe_title" - \
+        | mplayer -zoom -cache 4096 -demuxer lavf -title "$safe_title" - \
         >/tmp/TEMP_Palomitas/mplayer.log 2>&1
 }
 
