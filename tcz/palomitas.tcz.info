@@ -1,12 +1,12 @@
 Title:          palomitas.tcz
 Description:    palomitas: ver peliculas en espanol
-Version:        1.0.0
+Version:        1.0.1
 Author:         IamJony
 Original-site:  https://github.com/IamJony/palomitas-fltk
 Copying-policy: MIT
-Size:           176K
+Size:           856K
 Extension_by:   IamJony
 Tags:           peliculas video fltk streaming cli
-Comments:       Incluye GUI (palomitas-fltk) y CLI (palomitas-cli-launcher).
-Change-log:     2026/10/30 1.0.0 primera version
-Current:        2026/10/30 1.0.0
+Comments:       Incluye GUI (palomitas) y CLI (palomitas-cli).
+Change-log:     2026/11/06 1.0.1
+Current:        2026/11/06 1.0.1

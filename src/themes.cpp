@@ -43,7 +43,6 @@ void apply_theme(int index) {
     Fl::set_color(FL_DARK3, fl_darker(_bg));
     Fl::set_color(FL_DARK2, fl_darker(fl_darker(_bg)));
     Fl::set_color(FL_DARK1, fl_darker(fl_darker(fl_darker(_bg))));
-    if (g_refresh_cb) g_refresh_cb();
 }
 
 static std::string theme_path() {

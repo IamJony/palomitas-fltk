@@ -1,5 +1,4 @@
-# Makefile para Palomitas - Corregido para Tiny Core Linux
-# Ubicación: Raíz del proyecto. Los fuentes están en src/
+# Makefile para Palomitas
 
 SRC      = src
 CXX      = g++
